@@ -1,0 +1,14 @@
+libero_data_root: ./data/libero/raw
+libero_processed_root: ./data/libero/processed
+libero_suite: libero_spatial
+
+world_model:
+  data_root: ./data/world_model
+  checkpoint_dir: ./checkpoints/world_model/ctrl_world_base
+  steps: 50000
+  batch_size: 8
+
+reward_model:
+  data_root: ./data/world_model
+  checkpoint_dir: ./checkpoints/reward_model/qwen2vl7b_base
+  base_model_name: Qwen/Qwen2-VL-7B-Instruct

@@ -1,0 +1,5 @@
+reward_model:
+  checkpoint_dir: "Qwen/Qwen3-VL-4B-Instruct"
+  data_root: "./data/droid/stacking/labeled"
+  steps: 200
+  batch_size: 128

@@ -1,0 +1,43 @@
+# --- Large / local data (not core source) ---
+/data/
+/checkpoints/
+/logs/
+/tmp_venv*/
+
+# Heavy research trees (not VLAW DROID eval pipeline source)
+/dino_wm/
+/stable-worldmodel/
+/old_antigrav/
+
+# External vendored datasets & OpenPI blobs (re-clone / download separately)
+/external/LIBERO/
+/external/openpi/.git/
+/external/openpi/third_party/
+
+# Python / env
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# OS / editor
+.DS_Store
+*.swp
+*~
+
+# Local debug / stray cluster outputs
+strace.out
+*.pdf
+
+# PBS stdout/stderr dropped in repo root (7-digit job id suffix)
+*.e[0-9][0-9][0-9][0-9][0-9][0-9][0-9]
+*.o[0-9][0-9][0-9][0-9][0-9][0-9][0-9]

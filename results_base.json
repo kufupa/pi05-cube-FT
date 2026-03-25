@@ -1,0 +1,6 @@
+{
+    "model": "Base pi0.5-DROID",
+    "task": "stacking",
+    "success_rate": 0.7646358489990234,
+    "episodes": 10
+}

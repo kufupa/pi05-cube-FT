@@ -1,0 +1,10 @@
+vlaw:
+  task_name: "stacking"
+  n_real_rollouts_wm: 50
+  wm_finetune_steps: 50000
+  n_synthetic_trajectories: 500
+  rm_threshold: 0.8
+  policy_finetune_steps: 2000
+  base_policy_ckpt: "gs://openpi-assets/checkpoints/pi05_droid"
+  world_model_ckpt: "yjguo/Ctrl-World"
+  reward_model_ckpt: "Qwen/Qwen3-VL-4B-Instruct"

@@ -1,0 +1,94 @@
+#!/bin/bash
+#PBS -N vlaw_openpi_real
+#PBS -l select=1:ncpus=8:mem=64gb:ngpus=1
+#PBS -l walltime=12:00:00
+#PBS -j oe
+#PBS -o logs/vlaw_openpi_real.log
+
+set -euo pipefail
+cd "$PBS_O_WORKDIR"
+mkdir -p logs
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "FATAL: uv not found in PATH"
+    exit 2
+fi
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "FATAL: nvidia-smi not found"
+    exit 2
+fi
+
+echo "=== OPENPI REAL EVAL START $(date) ==="
+echo "Host: $(hostname)"
+echo "PWD: $PWD"
+echo "uv: $(uv --version)"
+echo "python: $(uv run python --version 2>&1)"
+nvidia-smi
+git rev-parse --short HEAD 2>/dev/null | sed 's/^/git_commit: /' || echo "git_commit: unknown"
+
+PYTHONPATH="$PWD" uv run python scripts/smoke/preflight_login.py \
+    --strict-imports "torch" \
+    --output logs/preflight_login_openpi.json || {
+    echo "FATAL: login preflight failed"
+    exit 3
+}
+
+PYTHONPATH="$PWD" uv run python scripts/smoke/interface_contract_check.py \
+    --output logs/interface_contract_openpi.json || {
+    echo "FATAL: interface contract check failed"
+    exit 3
+}
+
+# ── 1. Set up isolated OpenPI env ────────────────────────────────────
+export UV_PROJECT_ENVIRONMENT="$HOME/.venv_openpi"
+
+echo "Recreating OpenPI venv for deterministic dependency state..."
+rm -rf "$UV_PROJECT_ENVIRONMENT"
+uv venv "$UV_PROJECT_ENVIRONMENT" --python 3.11
+
+# Install patched openpi only — no tensorflow (conflicts with jax ml-dtypes).
+# The eval script uses our native PyTorch DROID loader, so tensorflow is not needed.
+VIRTUAL_ENV="$UV_PROJECT_ENVIRONMENT" uv pip install \
+    -e "external/openpi" \
+    --prerelease=allow
+echo "openpi install complete."
+
+# Some vendored OpenPI modules import pytest/chex at runtime.
+VIRTUAL_ENV="$UV_PROJECT_ENVIRONMENT" uv pip install pytest
+VIRTUAL_ENV="$UV_PROJECT_ENVIRONMENT" uv pip install --no-deps chex
+# chex runtime import chain needs toolz when installed with --no-deps
+VIRTUAL_ENV="$UV_PROJECT_ENVIRONMENT" uv pip install toolz
+VIRTUAL_ENV="$UV_PROJECT_ENVIRONMENT" uv pip install tfrecord
+
+# Validate OpenPI import in runtime env.
+if ! "$UV_PROJECT_ENVIRONMENT/bin/python" - <<'PY'
+import openpi
+print("openpi import OK")
+PY
+then
+    echo "FATAL: OpenPI runtime import failed"
+    exit 4
+fi
+
+# ── 2. Download pi05_droid checkpoint (cached after first run) ────────
+"$UV_PROJECT_ENVIRONMENT/bin/python" -c "
+from openpi.shared.download import maybe_download
+path = maybe_download('gs://openpi-assets/checkpoints/pi05_droid')
+print(f'Checkpoint at: {path}')
+"
+
+# ── 3. OpenPI request/infer shape smoke (make_droid_example + one TFRecord step) ──
+PYTHONPATH=$PWD "$UV_PROJECT_ENVIRONMENT/bin/python" scripts/eval_pi05_droid_real.py \
+    --task stacking \
+    --n_episodes 1 \
+    --smoke-only \
+    --output /tmp/results_base_real_smoke.json
+
+# ── 4. Run real eval script — outputs JSON consumed by VLAW loop ──────────
+PYTHONPATH=$PWD "$UV_PROJECT_ENVIRONMENT/bin/python" scripts/eval_pi05_droid_real.py \
+    --task stacking \
+    --n_episodes 50 \
+    --output results_base_real.json
+
+echo "=== REAL BASE EVAL DONE ==="
+cat results_base_real.json

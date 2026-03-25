@@ -1,0 +1,39 @@
+#!/bin/bash
+#PBS -N run_vlaw_loop
+#PBS -l select=1:ncpus=8:mem=64gb:ngpus=1
+#PBS -l walltime=06:00:00
+#PBS -j oe
+#PBS -o logs/vlaw_loop.log
+
+set -euo pipefail
+cd "$PBS_O_WORKDIR"
+
+mkdir -p logs
+
+module load cuda/12.1 2>/dev/null || true
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "FATAL: uv not found in PATH"
+  exit 2
+fi
+
+echo "=== VLAW Loop Starting at $(date) ==="
+echo "Host: $(hostname)"
+echo "Working dir: $PWD"
+echo "Python: $(uv run python --version)"
+git rev-parse --short HEAD 2>/dev/null | sed 's/^/git_commit: /' || echo "git_commit: unknown"
+
+PYTHONPATH="$PWD" uv run python scripts/smoke/preflight_login.py \
+  --output logs/preflight_login_vlaw.json --strict-imports "torch" || {
+  echo "FATAL: preflight failed"
+  exit 3
+}
+
+export PYTHONPATH=$PWD
+export PYTHONUNBUFFERED=1
+
+uv run python src/training/run_vlaw_loop.py \
+    --config configs/droid_single_task_vlaw.yaml
+
+echo "=== Done at $(date) ==="
+cat results_vlaw.json

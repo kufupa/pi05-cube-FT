@@ -1,0 +1,20 @@
+[project]
+name = "vlaw-droid"
+version = "0.1.0"
+description = "VLAW DROID single-task pipeline"
+authors = [{name = "Antigravity", email = "ai@example.com"}]
+dependencies = [
+    "torch",
+    "torchvision",
+    "transformers",
+    "diffusers",
+    "accelerate",
+    "qwen-vl-utils",
+    "pyyaml",
+    "h5py",
+    "matplotlib>=3.10.8",
+]
+
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"

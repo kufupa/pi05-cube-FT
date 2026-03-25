@@ -1,0 +1,12 @@
+#!/bin/bash
+#PBS -N train_reward_model
+#PBS -l select=1:ncpus=4:mem=32gb:ngpus=1:gpu_type=A100
+#PBS -l walltime=02:00:00
+
+cd $PBS_O_WORKDIR
+
+# module load cuda/12.1
+
+source scripts/setup_env.sh
+
+uv run -m src.reward_model.train_reward_model --config configs/droid_qwen_rm.yaml

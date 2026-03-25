@@ -1,0 +1,28 @@
+{
+  "result_type": "baseline_openpi_real",
+  "task": "stacking",
+  "success_rate": 0.9597386774461981,
+  "dataset_success_rate": 0.8,
+  "gripper_heuristic_success_rate": 0.96,
+  "action_agreement_mse_mean": 0.04152490641546132,
+  "episodes": 50,
+  "provenance": {
+    "schema_version": "1.0",
+    "timestamp_unix": 1774465954,
+    "host": "cx3-20-2",
+    "metric_backend": "openpi_inference",
+    "checkpoint": "gs://openpi-assets/checkpoints/pi05_droid",
+    "config_path": "scripts/eval_pi05_droid_real.py",
+    "task": "stacking",
+    "episodes": 50,
+    "config_name": "pi05_droid",
+    "subsample": 10,
+    "primary_metric": "action_agreement_exp_neg_mean_chunk_mse",
+    "metric_notes": {
+      "success_rate": "Mean over episodes of exp(-mean_MSE) between first predicted action chunk and logged expert (joint_velocity + gripper_position), same subsampling.",
+      "dataset_success_rate": "Mean of per-episode RLDS final reward (sanity baseline).",
+      "gripper_heuristic_success_rate": "Stacking proxy on predicted actions: close (<0.5 open) then open (>0.5) pattern on subsampled steps (secondary).",
+      "action_agreement_mse_mean": "Mean squared-error vs logged 8D expert command (primary diagnostic)."
+    }
+  }
+}

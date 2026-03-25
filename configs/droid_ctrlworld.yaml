@@ -1,0 +1,5 @@
+world_model:
+  checkpoint_dir: "yjguo/Ctrl-World"
+  data_root: "./data/droid/stacking"
+  steps: 50000
+  batch_size: 8
