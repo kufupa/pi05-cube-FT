@@ -1,4 +1,4 @@
-"""Qwen2-VL-7B reward model (4-bit) with explicit VRAM release."""
+"""Qwen-VL reward model (4-bit) with explicit VRAM release."""
 from __future__ import annotations
 
 import os
@@ -29,7 +29,7 @@ class QwenRewardModel(nn.Module):
     def _ensure_loaded(self) -> None:
         if self.mock or self._model is not None:
             return
-        from transformers import AutoProcessor, BitsAndBytesConfig, Qwen2VLForConditionalGeneration
+        from transformers import AutoProcessor, BitsAndBytesConfig
 
         print(f"QwenRewardModel: loading {self.checkpoint_dir!r} (4-bit)...")
         nf4 = BitsAndBytesConfig(
@@ -38,13 +38,41 @@ class QwenRewardModel(nn.Module):
             bnb_4bit_compute_dtype=torch.float16,
         )
         self._processor = AutoProcessor.from_pretrained(self.checkpoint_dir, trust_remote_code=True)
-        self._model = Qwen2VLForConditionalGeneration.from_pretrained(
-            self.checkpoint_dir,
-            quantization_config=nf4,
-            device_map="auto",
-            torch_dtype=torch.float16,
-            trust_remote_code=True,
-        )
+        load_kwargs = {
+            "quantization_config": nf4,
+            "device_map": "auto",
+            "torch_dtype": torch.float16,
+            "trust_remote_code": True,
+        }
+
+        # Try dedicated Qwen-VL classes first, then generic multimodal auto classes.
+        model = None
+        last_exc = None
+        class_order = [
+            "Qwen2_5_VLForConditionalGeneration",
+            "Qwen2VLForConditionalGeneration",
+            "AutoModelForImageTextToText",
+            "AutoModelForVision2Seq",
+        ]
+        for class_name in class_order:
+            try:
+                import transformers
+
+                cls = getattr(transformers, class_name, None)
+                if cls is None:
+                    continue
+                model = cls.from_pretrained(self.checkpoint_dir, **load_kwargs)
+                print(f"QwenRewardModel: loaded via {class_name}")
+                break
+            except Exception as exc:
+                last_exc = exc
+                print(f"QwenRewardModel: {class_name} load failed: {exc}")
+        if model is None:
+            raise RuntimeError(
+                f"Could not load multimodal model for {self.checkpoint_dir}. "
+                f"Last error: {last_exc}"
+            )
+        self._model = model
 
     def to_cpu_and_clear(self) -> None:
         if self._model is not None:

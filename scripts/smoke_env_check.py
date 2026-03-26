@@ -37,6 +37,8 @@ def main() -> int:
     _ensure_paths()
     root = _root()
     os.chdir(root)
+    # Keep HuggingFace Transformers from importing TensorFlow (avoids proto clashes with tfrecord).
+    os.environ.setdefault("USE_TF", "0")
 
     checks = [
         ("torch", lambda: __import__("torch")),

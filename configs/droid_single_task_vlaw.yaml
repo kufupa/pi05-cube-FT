@@ -8,7 +8,7 @@ vlaw:
   vlaw_iterations: 2
   base_policy_ckpt: "gs://openpi-assets/checkpoints/pi05_droid"
   world_model_ckpt: "yjguo/Ctrl-World"
-  reward_model_ckpt: "Qwen/Qwen2-VL-7B-Instruct"
+  reward_model_ckpt: "Qwen/Qwen3-VL-8B-Instruct"
 
 world_model:
   checkpoint_dir: "yjguo/Ctrl-World"

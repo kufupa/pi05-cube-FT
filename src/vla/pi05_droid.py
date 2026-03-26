@@ -78,7 +78,12 @@ class Pi05DroidPolicy:
     def act(self, observation: dict) -> torch.Tensor:
         """Return first action row [1, 8] (adapter applied)."""
         a0 = self._compute_action_tensor(observation)
+        if not isinstance(a0, torch.Tensor):
+            a0 = torch.as_tensor(a0, dtype=torch.float32).view(1, -1)
+        a0 = a0.float()
         if self.action_adapter is not None:
+            dev = self.action_adapter.weight.device
+            a0 = a0.to(dev)
             a0 = self.action_adapter(a0)
         return a0
 

@@ -8,7 +8,16 @@
 set -euo pipefail
 cd "$PBS_O_WORKDIR"
 
-mkdir -p logs output \
+RUN_PREFIX="${RUN_PREFIX:-vlaw_loop}"
+RUN_STAMP="$(date +%Y%m%d_%H%M%S)"
+RUN_DIR="$PBS_O_WORKDIR/runs/${RUN_PREFIX}_${RUN_STAMP}"
+RUN_OUTPUT_DIR="$RUN_DIR/output"
+RUN_LOG_DIR="$RUN_DIR/logs"
+RUN_RESULTS_JSON="$RUN_DIR/results_vlaw.json"
+RUN_PLOT_PATH="$RUN_DIR/vlaw_results_plot.png"
+RUN_PRECHECK_JSON="$RUN_LOG_DIR/preflight_login_vlaw.json"
+
+mkdir -p logs output runs "$RUN_OUTPUT_DIR" "$RUN_LOG_DIR" \
   "$PBS_O_WORKDIR/.cache/huggingface" \
   "$PBS_O_WORKDIR/.cache/hub" \
   "$PBS_O_WORKDIR/.cache/torch"
@@ -19,6 +28,9 @@ export TRANSFORMERS_CACHE="$PBS_O_WORKDIR/.cache/huggingface/transformers"
 export TORCH_HOME="$PBS_O_WORKDIR/.cache/torch"
 export PYTHONPATH="$PBS_O_WORKDIR"
 export PYTHONUNBUFFERED=1
+# Avoid Transformers importing TensorFlow (conflicts with tfrecord's embedded TF protos).
+export USE_TF=0
+export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 unset VLAW_MOCK_REWARD || true
 export VLAW_MOCK_REWARD=0
 
@@ -39,6 +51,7 @@ fi
 echo "=== VLAW Loop START $(date) ==="
 echo "Host: $(hostname)"
 echo "PWD: $PWD"
+echo "RUN_DIR: $RUN_DIR"
 nvidia-smi || true
 git rev-parse --short HEAD 2>/dev/null | sed 's/^/git_commit: /' || echo "git_commit: unknown"
 
@@ -48,22 +61,34 @@ uv run python scripts/smoke_env_check.py || {
 }
 
 PYTHONPATH="$PBS_O_WORKDIR" uv run python scripts/smoke/preflight_login.py \
-  --output logs/preflight_login_vlaw.json \
+  --output "$RUN_PRECHECK_JSON" \
   --strict-imports "torch,openpi" || {
   echo "FATAL: preflight_login"
   exit 4
 }
 
 uv run python src/training/run_vlaw_loop.py \
-  --config configs/droid_single_task_vlaw.yaml || {
+  --config configs/droid_single_task_vlaw.yaml \
+  --output-dir "$RUN_OUTPUT_DIR" \
+  --results-path "$RUN_RESULTS_JSON" \
+  --base-real-path "$PBS_O_WORKDIR/results_base_real.json" || {
   echo "FATAL: run_vlaw_loop"
   exit 6
 }
 
-uv run python plot_results.py || {
+uv run python plot_results.py \
+  --results "$RUN_RESULTS_JSON" \
+  --out "$RUN_PLOT_PATH" \
+  --base-real "$PBS_O_WORKDIR/results_base_real.json" || {
   echo "FATAL: plot_results"
   exit 5
 }
 
 echo "=== VLAW Loop END $(date) ==="
-tail -n 80 results_vlaw.json 2>/dev/null || true
+tail -n 80 "$RUN_RESULTS_JSON" 2>/dev/null || true
+
+# Preserve a copy of the full PBS stream log in the run folder.
+if [ -f "$PBS_O_WORKDIR/logs/vlaw_loop.log" ]; then
+  cp -f "$PBS_O_WORKDIR/logs/vlaw_loop.log" "$RUN_LOG_DIR/pbs_job.log" || true
+fi
+echo "Run artifacts saved under: $RUN_DIR"

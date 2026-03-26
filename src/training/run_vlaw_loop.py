@@ -156,11 +156,33 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="output",
+        help="Directory to store loop artifacts (WM ckpt, GIF, etc.).",
+    )
+    parser.add_argument(
+        "--results-path",
+        type=str,
+        default="results_vlaw.json",
+        help="Path to write final metrics JSON.",
+    )
+    parser.add_argument(
+        "--base-real-path",
+        type=str,
+        default="results_base_real.json",
+        help="Optional existing real-eval JSON to ingest as Base-Real.",
+    )
+    parser.add_argument(
         "--smoke",
         action="store_true",
         help="Tiny run + VLAW_MOCK_REWARD for login CPU (sets env inside process).",
     )
     args = parser.parse_args()
+
+    # Transformers pulls optional TensorFlow for image helpers; that collides with tfrecord's
+    # embedded example protos (duplicate tensorflow.BytesList). Torch-only is enough for Qwen2-VL.
+    os.environ.setdefault("USE_TF", "0")
 
     if args.smoke:
         os.environ["VLAW_MOCK_REWARD"] = "1"
@@ -188,14 +210,19 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    Path("output").mkdir(parents=True, exist_ok=True)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results_path = Path(args.results_path)
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    base_real_path = Path(args.base_real_path)
 
     policy_ckpt = config["base_policy_ckpt"]
     if args.smoke:
         policy_ckpt = "heuristic-fallback"
 
     wm = CtrlWorldModel(config["world_model_ckpt"])
-    wm_ckpt_path = wm_cfg.get("save_path", "output/wm_predictor.pt")
+    wm_ckpt_default = output_dir / "wm_predictor.pt"
+    wm_ckpt_path = wm_cfg.get("save_path", str(wm_ckpt_default))
     if Path(wm_ckpt_path).exists():
         try:
             wm.load_predictor(wm_ckpt_path)
@@ -261,7 +288,7 @@ def main():
 
         print(f"[STAGE 3] VLAW iter {loop_iter}: synthetic rollouts")
         syn_data = dream_synthetic_trajectories(wm, policy, real_data, n_traj=n_syn)
-        save_rollout_gif(syn_data, "output/wm_rollout_preview.gif")
+        save_rollout_gif(syn_data, str(output_dir / "wm_rollout_preview.gif"))
 
         print(f"[STAGE 4a] VLAW iter {loop_iter}: reward filter")
         filtered_syn = filter_with_reward_model(rm, syn_data, threshold=rm_thresh)
@@ -279,7 +306,6 @@ def main():
             "episodes": len(real_data),
         }
 
-    base_real_path = Path("results_base_real.json")
     if base_real_path.exists():
         try:
             base_real = json.loads(base_real_path.read_text(encoding="utf-8"))
@@ -295,7 +321,7 @@ def main():
         except Exception as exc:
             print(f"[WARN] Could not ingest results_base_real.json: {exc}")
 
-    write_json("results_vlaw.json", results)
+    write_json(str(results_path), results)
     print(json.dumps(results, indent=2))
 
 
