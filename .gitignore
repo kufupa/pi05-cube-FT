@@ -1,8 +1,44 @@
+# Hugging Face / Torch caches (project-local PBS layout)
+/.cache/
+
 # --- Large / local data (not core source) ---
 /data/
 /checkpoints/
 /logs/
 /tmp_venv*/
+/output/
+
+# Massive ML / dataset binaries (regenerate or store outside git)
+*.h5
+*.hdf5
+*.npz
+*.npy
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.onnx
+*.bin
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.mp4
+*.avi
+*.mkv
+wandb/
+lightning_logs/
+tensorboard*/
+mlruns/
+*.pkl
+*.pickle
+*.joblib
+*.arrow
+*.parquet
+
+# Nested clones carry their own history (commit inside those repos separately)
+# /dino_wm/ and /stable-worldmodel/ already listed below
 
 # Heavy research trees (not VLAW DROID eval pipeline source)
 /dino_wm/

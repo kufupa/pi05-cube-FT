@@ -3,52 +3,39 @@
   "task": "stacking",
   "metrics": {
     "Base": 0.8800000000000001,
-    "Filtered-BC-1": 0.9400000000000001,
-    "Filtered-BC-2": 0.9400000000000001,
-    "VLAW-1": 0.9400000000000001,
-    "VLAW-2": 0.9400000000000001,
+    "VLAW-1": 1.0,
     "Base-Real": 0.9597386774461981
   },
   "metrics_meta": {
     "Base": {
       "backend": "gripper_heuristic",
+      "rm_backend": "mock",
       "episodes": 5
-    },
-    "Filtered-BC-1": {
-      "backend": "gripper_heuristic",
-      "episodes": 10
-    },
-    "Filtered-BC-2": {
-      "backend": "gripper_heuristic",
-      "episodes": 10
     },
     "VLAW-1": {
       "backend": "gripper_heuristic",
-      "episodes": 10
-    },
-    "VLAW-2": {
-      "backend": "gripper_heuristic",
-      "episodes": 10
+      "rm_backend": "mock",
+      "episodes": 1
     },
     "Base-Real": {
       "backend": "openpi_inference",
       "primary_metric": "action_agreement_exp_neg_mean_chunk_mse",
       "episodes": 50,
-      "source_file": "results_base_real.json",
-      "dataset_success_rate": 0.8,
-      "action_agreement_mse_mean": 0.04152490641546132
+      "source_file": "results_base_real.json"
     }
   },
   "provenance": {
     "schema_version": "1.0",
-    "timestamp_unix": 1774469672,
-    "host": "cx3-20-0",
-    "metric_backend": "vlaw_heuristic_loop",
-    "checkpoint": "gs://openpi-assets/checkpoints/pi05_droid",
-    "config_path": "configs/droid_single_task_vlaw.yaml",
+    "timestamp_unix": 1774484966,
+    "host": "login-c",
+    "metric_backend": "vlaw_pipeline",
+    "checkpoint": "heuristic-fallback",
+    "config_path": "/rds/general/user/aa6622/home/project/configs/droid_single_task_vlaw.yaml",
     "task": "stacking",
+    "config_base_policy_ckpt": "gs://openpi-assets/checkpoints/pi05_droid",
     "world_model_ckpt": "yjguo/Ctrl-World",
-    "reward_model_ckpt": "Qwen/Qwen3-VL-4B-Instruct",
-    "rm_threshold": 0.8
+    "reward_model_ckpt": "Qwen/Qwen2-VL-7B-Instruct",
+    "rm_threshold": 0.3,
+    "smoke": true
   }
 }

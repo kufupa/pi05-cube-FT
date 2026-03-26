@@ -4,16 +4,26 @@ version = "0.1.0"
 description = "VLAW DROID single-task pipeline"
 authors = [{name = "Antigravity", email = "ai@example.com"}]
 dependencies = [
-    "torch",
+    "torch>=2.4",
     "torchvision",
-    "transformers",
+    "transformers>=4.53.0",
     "diffusers",
     "accelerate",
+    "bitsandbytes",
     "qwen-vl-utils",
     "pyyaml",
     "h5py",
     "matplotlib>=3.10.8",
+    "imageio",
+    "tensorflow",
+    "tensorflow-datasets",
+    "tfrecord",
+    "opencv-python-headless",
+    "openpi",
 ]
+
+[tool.uv.sources]
+openpi = { path = "external/openpi", editable = true }
 
 [build-system]
 requires = ["setuptools>=42", "wheel"]

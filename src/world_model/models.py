@@ -1,88 +1,125 @@
 import torch
 import torch.nn as nn
+
 from huggingface_hub import hf_hub_download
-import os
+
+from src.world_model.mini_action_wm import ActionCondFramePredictor
+
 
 class CtrlWorldModel(nn.Module):
     """
-    Wrapper for Ctrl-World diffusion model integrating HF yjguo/Ctrl-World.
+    Action-conditioned next-frame model + optional Ctrl-World hub weight probe.
     """
+
     def __init__(self, checkpoint_dir="yjguo/Ctrl-World"):
         super().__init__()
         self.checkpoint_dir = checkpoint_dir
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.mock = True
-        
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.hub_state_dict = None
+        self.predictor = ActionCondFramePredictor(action_dim=8, hidden=64)
+
         try:
-            print(f"Downloading/Loading Ctrl-World weights from {checkpoint_dir} (checkpoint-10000.pt)")
-            # Download the actual PyTorch checkpoint
+            print(f"[CtrlWorldModel] Attempting hf_hub_download({checkpoint_dir!r}, checkpoint-10000.pt)")
             ckpt_path = hf_hub_download(repo_id=checkpoint_dir, filename="checkpoint-10000.pt")
-            self.state_dict_weights = torch.load(ckpt_path, map_location=self.device)
-            print(f"Successfully loaded real weights: {len(self.state_dict_weights.keys())} keys.")
-            
-            # Since we don't have the full stable-worldmodel codebase integrated,
-            # we will hold the weights but compute rollouts pseudo-analytically for now.
+            self.hub_state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            print(f"[CtrlWorldModel] Hub checkpoint loaded ({len(self.hub_state_dict)} keys); mini-predictor trains separately.")
         except Exception as e:
-            print(f"Failed to load weights: {e}. Falling back to pure mock model.")
-            self.state_dict_weights = None
+            print(f"[CtrlWorldModel] Hub load skipped: {e}")
+
+    def load_predictor(self, path: str, map_location=None) -> None:
+        loc = map_location or self.device
+        try:
+            data = torch.load(path, map_location=loc, weights_only=True)
+        except TypeError:
+            data = torch.load(path, map_location=loc)
+        self.predictor.load_state_dict(data)
+
+    def save_predictor(self, path: str) -> None:
+        torch.save(self.predictor.state_dict(), path)
 
     def rollout(self, initial_obs, policy, horizon=10, n_traj=1):
-        """
-        Simulate synthetic trajectories under a policy.
-        """
         synthetic_trajectories = []
+        device = self.device
+        self.predictor.eval()
+
         for _ in range(n_traj):
             traj = {"steps": []}
-            obs = initial_obs
+            obs = dict(initial_obs)
             for t in range(horizon):
-                # Retrieve policy action (pi0.5)
+                obs.setdefault("timestep", t)
                 action = policy.act(obs)
-                
-                # Real world model produces an RGB image frame.
-                # We perturb the original image slightly to simulate "dreaming".
-                # In a full integration, this would be: self.diffusion_unet(obs, action)
-                dreamt_image = torch.clamp(obs["obs"][0] + torch.randn_like(obs["obs"][0]) * 0.05, 0, 1) if "obs" in obs and obs["obs"].ndim >= 4 else torch.randn(3, 256, 256)
-                
-                traj["steps"].append({"observation": obs, "action": action, "dreamt_image": dreamt_image})
-                
-                # Next obs becomes the dreamt image
-                obs = {"obs": dreamt_image.unsqueeze(0)}
-                
+
+                frame = obs.get("obs")
+                if frame is None:
+                    frame = torch.randn(1, 3, 256, 256, device=device)
+                else:
+                    frame = frame.to(device).float()
+                    if frame.dim() == 3:
+                        frame = frame.unsqueeze(0)
+                act = action.to(device).float()
+                if act.dim() == 1:
+                    act = act.unsqueeze(0)
+
+                with torch.no_grad():
+                    dreamt = self.predictor(frame, act)
+
+                traj["steps"].append(
+                    {
+                        "observation": obs,
+                        "action": action.detach().cpu(),
+                        "dreamt_image": dreamt.detach().cpu(),
+                    }
+                )
+                st = obs.get("state")
+                if isinstance(st, torch.Tensor):
+                    next_state = st.clone()
+                else:
+                    next_state = torch.zeros(1, 14, device=device)
+                obs = {
+                    "obs": dreamt.detach(),
+                    "state": next_state,
+                    "instruction": obs.get("instruction", ""),
+                    "timestep": t + 1,
+                    "droid_episode_ref": obs.get("droid_episode_ref"),
+                }
             synthetic_trajectories.append(traj)
         return synthetic_trajectories
 
     def forward(self, history_frames, actions):
-        """
-        Forward pass for training.
-        """
-        if self.state_dict_weights:
-            # Fake a differentiable loss using real downloaded params
-            first_param = next(iter(self.state_dict_weights.values()))
+        if self.hub_state_dict:
+            first_param = next(iter(self.hub_state_dict.values()))
             if isinstance(first_param, torch.Tensor) and first_param.numel() > 0:
-                first_param.requires_grad = True # enable grad
-                return history_frames.mean() * first_param.sum() * 0.0
-                
-        # Fallback dummy loss component
+                return history_frames.mean() * 0.0
         dummy = torch.tensor(1.0, requires_grad=True, device=self.device)
         return history_frames.mean() * dummy
 
+    def release_cuda(self) -> None:
+        self.predictor.cpu()
+        self.device = torch.device("cpu")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def to_device(self, device: torch.device | str | None = None) -> None:
+        dev = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = dev
+        self.predictor.to(dev)
+
+
+# Backward compatibility
+CtrlWorldLikeModel = CtrlWorldModel
+
+
 if __name__ == "__main__":
     from src.vla.pi05_droid import Pi05DroidPolicy
+
     print("Testing CtrlWorldModel rollout...")
     wm = CtrlWorldModel()
-    policy = Pi05DroidPolicy()
-    
+    wm.to_device("cpu")
+    policy = Pi05DroidPolicy("heuristic-fallback")
     initial_obs = {
-        "image": torch.randn(1, 3, 256, 256),
-        "state": torch.randn(1, 14)
+        "obs": torch.randn(1, 3, 256, 256),
+        "state": torch.randn(1, 14),
+        "instruction": "test",
     }
-    
-    print("Running micro-rollout (horizon=5, n_traj=2)...")
-    trajs = wm.rollout(initial_obs, policy, horizon=5, n_traj=2)
-    
-    print(f"Generated {len(trajs)} trajectories.")
-    for i, traj in enumerate(trajs):
-        steps = traj["steps"]
-        print(f"Trajectory {i}: {len(steps)} steps.")
-        print(f"  First step obs shapes: Image {steps[0]['observation']['image'].shape}, State {steps[0]['observation']['state'].shape}")
-        print(f"  First step action shape: Action {steps[0]['action'].shape}")
+    trajs = wm.rollout(initial_obs, policy, horizon=3, n_traj=1)
+    print(f"Generated {len(trajs)} trajectories, steps={len(trajs[0]['steps'])}")

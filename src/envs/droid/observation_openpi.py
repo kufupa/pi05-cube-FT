@@ -60,6 +60,53 @@ def decode_jpeg_bytes_to_rgb_uint8(img_bytes) -> np.ndarray:
     return np.ascontiguousarray(rgb)
 
 
+def build_openpi_droid_request_from_tensors(image_chw, state_14, instruction: str) -> dict:
+    """
+    Build OpenPI flat request from a single CHW float image in [0,1] and 14-D robot state.
+    Used by world-model rollouts where only tensor observations are available.
+    """
+    import torch
+
+    if isinstance(image_chw, torch.Tensor):
+        t = image_chw.detach().cpu().float()
+        if t.dim() == 4:
+            t = t[0]
+        chw = t.clamp(0, 1)
+        hwc = (chw.numpy() * 255.0).clip(0, 255).astype(np.uint8)
+        hwc = np.transpose(hwc, (1, 2, 0))
+    else:
+        arr = np.asarray(image_chw, dtype=np.float32)
+        if arr.ndim == 4:
+            arr = arr[0]
+        if arr.shape[0] == 3:
+            hwc = (np.transpose(arr, (1, 2, 0)) * 255.0).clip(0, 255).astype(np.uint8)
+        else:
+            hwc = np.zeros((256, 256, 3), dtype=np.uint8)
+
+    if isinstance(state_14, torch.Tensor):
+        s = state_14.detach().cpu().float().view(-1).numpy()
+    else:
+        s = np.asarray(state_14, dtype=np.float32).reshape(-1)
+    if s.size < 14:
+        pad = np.zeros(14, dtype=np.float32)
+        pad[: s.size] = s
+        s = pad
+    jp = s[:7].astype(np.float32)
+    gp = np.array([float(s[-1])], dtype=np.float32)
+
+    base224 = resize_with_pad_hwc_uint8(hwc, 224, 224)
+    wrist224 = np.zeros((224, 224, 3), dtype=np.uint8)
+    prompt = (instruction or "").strip() or "do something"
+
+    return {
+        "observation/exterior_image_1_left": base224,
+        "observation/wrist_image_left": wrist224,
+        "observation/joint_position": jp,
+        "observation/gripper_position": gp,
+        "prompt": prompt,
+    }
+
+
 def build_openpi_droid_request(ep: dict, t: int, instruction: str) -> dict:
     """
     Observation keys and tensor layout match external/openpi/examples/droid/main.py.

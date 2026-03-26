@@ -8,32 +8,62 @@
 set -euo pipefail
 cd "$PBS_O_WORKDIR"
 
-mkdir -p logs
+mkdir -p logs output \
+  "$PBS_O_WORKDIR/.cache/huggingface" \
+  "$PBS_O_WORKDIR/.cache/hub" \
+  "$PBS_O_WORKDIR/.cache/torch"
+
+export HF_HOME="$PBS_O_WORKDIR/.cache/huggingface"
+export HF_HUB_CACHE="$PBS_O_WORKDIR/.cache/hub"
+export TRANSFORMERS_CACHE="$PBS_O_WORKDIR/.cache/huggingface/transformers"
+export TORCH_HOME="$PBS_O_WORKDIR/.cache/torch"
+export PYTHONPATH="$PBS_O_WORKDIR"
+export PYTHONUNBUFFERED=1
+unset VLAW_MOCK_REWARD || true
+export VLAW_MOCK_REWARD=0
 
 module load cuda/12.1 2>/dev/null || true
+# Compute nodes often lack /usr/include/python3.11/Python.h; bitsandbytes JIT needs it.
+module load Python/3.11.5-GCCcore-13.2.0 2>/dev/null || module load Python/3.11.3-GCCcore-12.3.0 2>/dev/null || true
+if [ -n "${EBROOTPYTHON:-}" ] && [ -f "$EBROOTPYTHON/include/python3.11/Python.h" ]; then
+  export UV_PYTHON="${EBROOTPYTHON}/bin/python3"
+  export PATH="${EBROOTPYTHON}/bin:${PATH}"
+  echo "Using EasyBuild Python for uv (headers): $UV_PYTHON"
+fi
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "FATAL: uv not found in PATH"
   exit 2
 fi
 
-echo "=== VLAW Loop Starting at $(date) ==="
+echo "=== VLAW Loop START $(date) ==="
 echo "Host: $(hostname)"
-echo "Working dir: $PWD"
-echo "Python: $(uv run python --version)"
+echo "PWD: $PWD"
+nvidia-smi || true
 git rev-parse --short HEAD 2>/dev/null | sed 's/^/git_commit: /' || echo "git_commit: unknown"
 
-PYTHONPATH="$PWD" uv run python scripts/smoke/preflight_login.py \
-  --output logs/preflight_login_vlaw.json --strict-imports "torch" || {
-  echo "FATAL: preflight failed"
+uv run python scripts/smoke_env_check.py || {
+  echo "FATAL: smoke_env_check"
   exit 3
 }
 
-export PYTHONPATH=$PWD
-export PYTHONUNBUFFERED=1
+PYTHONPATH="$PBS_O_WORKDIR" uv run python scripts/smoke/preflight_login.py \
+  --output logs/preflight_login_vlaw.json \
+  --strict-imports "torch,openpi" || {
+  echo "FATAL: preflight_login"
+  exit 4
+}
 
 uv run python src/training/run_vlaw_loop.py \
-    --config configs/droid_single_task_vlaw.yaml
+  --config configs/droid_single_task_vlaw.yaml || {
+  echo "FATAL: run_vlaw_loop"
+  exit 6
+}
 
-echo "=== Done at $(date) ==="
-cat results_vlaw.json
+uv run python plot_results.py || {
+  echo "FATAL: plot_results"
+  exit 5
+}
+
+echo "=== VLAW Loop END $(date) ==="
+tail -n 80 results_vlaw.json 2>/dev/null || true

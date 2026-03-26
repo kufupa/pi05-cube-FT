@@ -1,98 +1,171 @@
-import torch
-import torch.nn as nn
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+"""Qwen2-VL-7B reward model (4-bit) with explicit VRAM release."""
+from __future__ import annotations
+
 import os
 
+import torch
+import torch.nn as nn
+
+try:
+    from qwen_vl_utils import process_vision_info
+except ImportError:
+    process_vision_info = None
+
+
+def _mock_enabled() -> bool:
+    return os.environ.get("VLAW_MOCK_REWARD", "").strip() in ("1", "true", "True", "yes")
+
+
 class QwenRewardModel(nn.Module):
-    """
-    Reward Model wrapping Qwen3-VL-4B-Instruct.
-    Scores trajectories (videos + instruction) for success prob.
-    """
-    def __init__(self, checkpoint_dir="Qwen/Qwen3-VL-4B-Instruct"):
+    def __init__(self, checkpoint_dir="Qwen/Qwen2-VL-7B-Instruct"):
         super().__init__()
         self.checkpoint_dir = checkpoint_dir
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.mock = False
-        
-        try:
-            print(f"Instantiating QwenRewardModel from {checkpoint_dir}")
-            self.mock = True
-        except Exception as e:
-            print(f"Failed to load Qwen: {e}. Using mock RM.")
-            self.mock = True
-
-    def score(self, video_frames, instruction):
-        """
-        Score a video and instruction to get a success probability.
-        """
+        self._model = None
+        self._processor = None
+        self.mock = _mock_enabled() or not torch.cuda.is_available()
         if self.mock:
-            # Mock generating a probability
-            B = video_frames.shape[0] if isinstance(video_frames, torch.Tensor) and video_frames.dim() == 5 else 1
-            success_prob = torch.rand(B, 1) # random p(yes)
-            return success_prob
-            
-        # Real Qwen3-VL inference logic
-        processor = AutoProcessor.from_pretrained(self.checkpoint_dir)
-        model = Qwen2VLForConditionalGeneration.from_pretrained(
-            self.checkpoint_dir, torch_dtype=torch.float16, device_map="auto"
+            print(f"QwenRewardModel: mock mode (VLAW_MOCK_REWARD or no CUDA). ckpt={checkpoint_dir!r}")
+
+    def _ensure_loaded(self) -> None:
+        if self.mock or self._model is not None:
+            return
+        from transformers import AutoProcessor, BitsAndBytesConfig, Qwen2VLForConditionalGeneration
+
+        print(f"QwenRewardModel: loading {self.checkpoint_dir!r} (4-bit)...")
+        nf4 = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16,
+        )
+        self._processor = AutoProcessor.from_pretrained(self.checkpoint_dir, trust_remote_code=True)
+        self._model = Qwen2VLForConditionalGeneration.from_pretrained(
+            self.checkpoint_dir,
+            quantization_config=nf4,
+            device_map="auto",
+            torch_dtype=torch.float16,
+            trust_remote_code=True,
         )
 
+    def to_cpu_and_clear(self) -> None:
+        if self._model is not None:
+            try:
+                self._model.to("cpu")
+            except Exception:
+                pass
+            del self._model
+            self._model = None
+        self._processor = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def score_trajectory(self, video, instruction: str) -> torch.Tensor:
+        """
+        video: [B, C, T, H, W] or [C, T, H, W] float in [0,1] or uint8-like.
+        Returns [B, 1] success probability (p yes).
+        """
+        if self.mock:
+            b = 1
+            if isinstance(video, torch.Tensor):
+                if video.dim() == 5:
+                    b = video.shape[0]
+            return torch.full((b, 1), 0.85)
+
+        self._ensure_loaded()
+        assert self._model is not None and self._processor is not None
+
+        if isinstance(video, torch.Tensor):
+            if video.dim() == 4:
+                video = video.unsqueeze(0)
+            b = video.shape[0]
+        else:
+            b = 1
+
+        probs = []
+        for bi in range(b):
+            vid = video[bi] if isinstance(video, torch.Tensor) and video.dim() == 5 else video
+            p = self._score_one_clip(vid, instruction)
+            probs.append(p)
+        return torch.tensor(probs, dtype=torch.float32).view(-1, 1)
+
+    def _score_one_clip(self, video_cthw: torch.Tensor, instruction: str) -> float:
+        import numpy as np
+        from PIL import Image
+
+        if video_cthw.dim() != 4:
+            raise ValueError("expected [C,T,H,W]")
+        _, t, _, _ = video_cthw.shape
+        max_frames = 8
+        if t > max_frames:
+            idx = [int(i) for i in torch.linspace(0, t - 1, max_frames).tolist()]
+        else:
+            idx = list(range(t))
+        frames = []
+        for i in idx:
+            fr = video_cthw[:, i].detach().float().clamp(0, 1).cpu().numpy()
+            fr = (np.transpose(fr, (1, 2, 0)) * 255.0).clip(0, 255).astype(np.uint8)
+            frames.append(Image.fromarray(fr))
+
+        prompt = (
+            f"Did the robot successfully perform this task: {instruction}? "
+            "Answer with exactly one word: yes or no."
+        )
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "video",
-                        "video": video_frames, # List of images or video path
-                        "fps": 10.0,
-                    },
-                    {"type": "text", "text": f"Did the robot successfully perform the following task: {instruction}? Answer only with 'yes' or 'no'."},
+                    {"type": "video", "video": frames},
+                    {"type": "text", "text": prompt},
                 ],
             }
         ]
-        
-        # This implementation follows the VLAW paper's logic of extracting p(yes)
-        # from the model's logits for the first generated token.
-        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = processor(text=[text], videos=[video_frames], padding=True, return_tensors="pt").to(self.device)
-        
+
+        processor = self._processor
+        if process_vision_info is not None:
+            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            image_inputs, video_inputs = process_vision_info(messages)
+            inputs = processor(
+                text=[text],
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            )
+        else:
+            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = processor(text=[text], videos=[frames], padding=True, return_tensors="pt")
+
+        dev = next(self._model.parameters()).device
+        inputs = inputs.to(dev)
+
+        tok = processor.tokenizer
+        yes_id = tok.encode("yes", add_special_tokens=False)
+        no_id = tok.encode("no", add_special_tokens=False)
+        yes_id = yes_id[0] if yes_id else tok.unk_token_id
+        no_id = no_id[0] if no_id else tok.unk_token_id
+
         with torch.no_grad():
-            outputs = model.generate(**inputs, max_new_tokens=1, output_scores=True, return_dict_in_generate=True)
-            # Scores is a list of tensors, one per generated token. 
-            # We look at the first token's logits for "yes" vs "no".
-            logits = outputs.scores[0] # [batch, vocab_size]
-            
-            # Map "yes" and "no" to their token IDs
-            yes_id = processor.tokenizer.convert_tokens_to_ids("yes")
-            no_id = processor.tokenizer.convert_tokens_to_ids("no")
-            
-            # Compute softmax over just yes/no to get p(yes)
-            relevant_logits = torch.stack([logits[:, yes_id], logits[:, no_id]], dim=-1)
-            probs = torch.softmax(relevant_logits, dim=-1)
-            success_prob = probs[:, 0].unsqueeze(-1) # return p(yes)
-            
-        return success_prob
+            out = self._model.generate(
+                **inputs,
+                max_new_tokens=1,
+                do_sample=False,
+                output_scores=True,
+                return_dict_in_generate=True,
+            )
+            logits = out.scores[0][0]
+            pair = torch.stack([logits[yes_id], logits[no_id]]).float()
+            p_yes = torch.softmax(pair, dim=0)[0].item()
+        return float(p_yes)
+
+    def score(self, video_frames, instruction):
+        return self.score_trajectory(video_frames, instruction)
 
     def forward(self, video_frames, instructions):
-        # Dummy forward for fine-tuning script
         logits = torch.randn(video_frames.shape[0], 1, requires_grad=True)
         return logits
 
+
 if __name__ == "__main__":
-    print("Testing QwenRewardModel inference...")
+    os.environ["VLAW_MOCK_REWARD"] = "1"
     rm = QwenRewardModel()
-    
-    # Simulate a single trajectory (batch=1, channels=3, steps=10, H=256, W=256)
-    video = torch.randn(1, 3, 10, 256, 256)
-    instruction = "stack the red block on the blue block"
-    
-    prob = rm.score(video, instruction)
-    print(f"p(yes): {prob.item():.4f}")
-    
-    # Test batch score
-    batch_video = torch.randn(3, 3, 10, 256, 256)
-    batch_probs = rm.score(batch_video, instruction)
-    print("Batch probabilities:")
-    for i, p in enumerate(batch_probs):
-        res = "accepted" if p.item() > 0.8 else "rejected"
-        print(f"  Sample {i}: p(yes) = {p.item():.4f} -> {res}")
+    v = torch.rand(1, 3, 4, 64, 64)
+    print("p(yes)", rm.score_trajectory(v, "stack blocks").item())
