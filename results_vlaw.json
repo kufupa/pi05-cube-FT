@@ -26,7 +26,7 @@
   },
   "provenance": {
     "schema_version": "1.0",
-    "timestamp_unix": 1774484966,
+    "timestamp_unix": 1774523684,
     "host": "login-c",
     "metric_backend": "vlaw_pipeline",
     "checkpoint": "heuristic-fallback",
@@ -34,7 +34,7 @@
     "task": "stacking",
     "config_base_policy_ckpt": "gs://openpi-assets/checkpoints/pi05_droid",
     "world_model_ckpt": "yjguo/Ctrl-World",
-    "reward_model_ckpt": "Qwen/Qwen2-VL-7B-Instruct",
+    "reward_model_ckpt": "Qwen/Qwen3-VL-8B-Instruct",
     "rm_threshold": 0.3,
     "smoke": true
   }

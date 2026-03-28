@@ -1,0 +1,42 @@
+{
+  "status": "pass",
+  "host": "cx3-20-4",
+  "python": {
+    "executable": "/rds/general/user/aa6622/home/project/.venv/bin/python3",
+    "version": "3.11.5 (main, May 15 2024, 16:26:40) [GCC 13.2.0]",
+    "include_dir": "/sw-eb/software/Python/3.11.5-GCCcore-13.2.0/include/python3.11",
+    "python_h_exists": true,
+    "python_h_path": "/sw-eb/software/Python/3.11.5-GCCcore-13.2.0/include/python3.11/Python.h"
+  },
+  "tooling": {
+    "uv_path": "/rds/general/user/aa6622/home/.local/bin/uv",
+    "bash_path": "/bin/bash"
+  },
+  "commands": [
+    {
+      "cmd": "python --version",
+      "returncode": 0,
+      "stdout": "Python 3.11.5",
+      "stderr": "",
+      "elapsed_s": 0.01
+    },
+    {
+      "cmd": "uv --version",
+      "returncode": 0,
+      "stdout": "uv 0.10.2",
+      "stderr": "",
+      "elapsed_s": 0.014
+    }
+  ],
+  "imports": {
+    "torch": {
+      "ok": true,
+      "error": ""
+    },
+    "openpi": {
+      "ok": true,
+      "error": ""
+    }
+  },
+  "failures": []
+}
