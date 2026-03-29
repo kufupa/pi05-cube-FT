@@ -14,6 +14,8 @@ cube_dataset/datasets/
 cube_dataset/videos_frames/
 cube_dataset/top_episodes/
 cube_dataset/gt_export/
+# Pi0.5-DROID × OGBench closed-loop rollouts (MP4 + results.jsonl per sample)
+cube_dataset/pi05_rollouts/
 cube_dataset/*.log
 
 # Massive ML / dataset binaries (regenerate or store outside git)
@@ -33,6 +35,8 @@ cube_dataset/*.log
 *.tgz
 *.7z
 *.mp4
+*.webm
+*.mov
 *.avi
 *.mkv
 wandb/

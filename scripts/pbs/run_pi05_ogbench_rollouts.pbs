@@ -1,0 +1,70 @@
+#!/bin/bash
+#PBS -N pi05_ogbench_roll
+#PBS -l select=1:ncpus=8:mem=64gb:ngpus=1:gpu_type=A100
+#PBS -l walltime=12:00:00
+#PBS -j oe
+#PBS -o logs/pi05_ogbench_rollouts.log
+#
+# Closed-loop Pi0.5-DROID (OpenPI/JAX on GPU) on OGBench cube-single from vlm_start_goal metas.
+# MuJoCo rgb_array: xvfb-run + MUJOCO_GL=glfw (EGL/PyOpenGL often fails headless on this stack).
+# JAX still sees the A100 for policy inference.
+#
+set -euo pipefail
+export PYTHONUNBUFFERED=1
+
+if [[ -n "${PBS_O_WORKDIR:-}" ]]; then
+  cd "${PBS_O_WORKDIR}"
+  PROJECT_ROOT="${PBS_O_WORKDIR}"
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  cd "${PROJECT_ROOT}"
+fi
+
+export PYTHONPATH="${PROJECT_ROOT}"
+# Force GLFW+X11 via xvfb; some nodes export MUJOCO_GL=egl which breaks PyOpenGL here.
+export MUJOCO_GL=glfw
+
+mkdir -p logs cube_dataset/pi05_rollouts
+
+PY="${PROJECT_ROOT}/stable-worldmodel/.venv/bin/python"
+ROLL_SCRIPT="${PROJECT_ROOT}/cube_dataset/run_pi05_ogbench_rollouts.py"
+
+if [[ ! -x "${PY}" ]]; then
+  echo "FATAL: missing ${PY}"
+  exit 2
+fi
+
+if ! command -v xvfb-run >/dev/null 2>&1; then
+  echo "FATAL: xvfb-run not found"
+  exit 2
+fi
+
+XVFB=(xvfb-run -a -s "-screen 0 1024x768x24")
+
+echo "=== pi05_ogbench_rollouts $(date) ==="
+echo "Host: $(hostname)"
+echo "PROJECT_ROOT: ${PROJECT_ROOT}"
+echo "Python: $("${PY}" --version)"
+echo "Render: xvfb-run MUJOCO_GL=${MUJOCO_GL}"
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi || true
+fi
+"${PY}" -c "import jax; print('jax devices:', jax.devices())" || true
+
+"${XVFB[@]}" "${PY}" "${ROLL_SCRIPT}" --smoke-test
+"${XVFB[@]}" "${PY}" "${ROLL_SCRIPT}" --n 20 --start-index 0
+
+OUT="${PROJECT_ROOT}/cube_dataset/pi05_rollouts"
+NMP4=$(find "${OUT}" -maxdepth 1 -type f -name 'sample_*.mp4' 2>/dev/null | wc -l)
+if [[ "${NMP4}" -lt 20 ]]; then
+  echo "FATAL: expected at least 20 sample_*.mp4 under ${OUT}, got ${NMP4}"
+  exit 4
+fi
+JL=$(wc -l < "${OUT}/results.jsonl")
+if [[ "${JL}" -lt 20 ]]; then
+  echo "FATAL: expected at least 20 lines in ${OUT}/results.jsonl, got ${JL}"
+  exit 5
+fi
+echo "VERIFY OK: ${NMP4} mp4, results.jsonl ${JL} lines"
+echo "=== done $(date) ==="

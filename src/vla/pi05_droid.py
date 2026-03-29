@@ -4,11 +4,15 @@ act() always returns [1, 8] (joint velocity-style 7 + gripper 1).
 """
 from __future__ import annotations
 
+import datetime as _datetime
+
+# Python 3.11+ only; some OpenPI / HF deps reference datetime.UTC on 3.10.
+if not hasattr(_datetime, "UTC"):
+    _datetime.UTC = _datetime.timezone.utc
+
 import numpy as np
 import torch
 import torch.nn as nn
-
-from src.envs.droid import get_droid_dataset
 
 
 def _make_identity_linear_8() -> nn.Linear:
@@ -143,6 +147,8 @@ class Pi05DroidPolicy:
         return 0.6 * gt_success + 0.4 * gripper_score
 
     def evaluate(self, task_name: str, n_episodes: int = 10, dataset=None) -> float:
+        from src.envs.droid import get_droid_dataset
+
         print(f"Evaluating π0.5-DROID [{task_name}] over {n_episodes} episodes (gripper heuristic)...")
 
         if dataset is None:
