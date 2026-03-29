@@ -1,0 +1,75 @@
+#!/bin/bash
+#PBS -N vlm_start_goal
+#PBS -l select=1:ncpus=8:mem=32gb
+#PBS -l walltime=02:00:00
+#PBS -j oe
+#PBS -o logs/vlm_start_goal.log
+#
+# 100 start/goal PNG pairs under cube_dataset/goal_images/vlm_start_goal/.
+# Uses xvfb-run + virtual DISPLAY (same as successful login runs). GPU+MUJOCO_GL=egl
+# failed on this stack with PyOpenGL EGL errors on some GPU nodes; CPU+xvfb is reliable.
+#
+set -euo pipefail
+
+if [[ -n "${PBS_O_WORKDIR:-}" ]]; then
+  cd "${PBS_O_WORKDIR}"
+  PROJECT_ROOT="${PBS_O_WORKDIR}"
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  cd "${PROJECT_ROOT}"
+fi
+
+unset MUJOCO_GL
+
+mkdir -p logs cube_dataset/goal_images/vlm_start_goal
+
+PY="${PROJECT_ROOT}/stable-worldmodel/.venv/bin/python"
+SAMPLE_SCRIPT="${PROJECT_ROOT}/cube_dataset/sample_start_goal_images.py"
+
+if [[ ! -x "${PY}" ]]; then
+  echo "FATAL: missing ${PY}"
+  exit 2
+fi
+
+if ! command -v xvfb-run >/dev/null 2>&1; then
+  echo "FATAL: xvfb-run not found; install Xvfb or use an interactive node with xvfb-run."
+  exit 2
+fi
+
+XVFB=(xvfb-run -a -s "-screen 0 1024x768x24")
+
+echo "=== vlm_start_goal $(date) ==="
+echo "Host: $(hostname)"
+echo "PROJECT_ROOT: ${PROJECT_ROOT}"
+echo "Python: $("${PY}" --version)"
+echo "Render: xvfb-run (MUJOCO_GL unset)"
+
+"${XVFB[@]}" "${PY}" "${SAMPLE_SCRIPT}" --smoke-test
+# Regenerate all samples (overwrite) so each PBS run proves full write, not skip.
+"${XVFB[@]}" "${PY}" "${SAMPLE_SCRIPT}" --n-samples 100 --no-skip-existing
+
+# Verify deliverables
+OUT="${PROJECT_ROOT}/cube_dataset/goal_images/vlm_start_goal/cube-single-v0"
+N=$(find "${OUT}" -maxdepth 1 -type d -name 'sample_*' | wc -l)
+if [[ "${N}" -ne 100 ]]; then
+  echo "FATAL: expected 100 sample_* dirs under ${OUT}, got ${N}"
+  exit 4
+fi
+for s in "${OUT}"/sample_*; do
+  for f in start.png goal.png side_by_side.png meta.json; do
+    if [[ ! -f "${s}/${f}" ]]; then
+      echo "FATAL: missing ${s}/${f}"
+      exit 5
+    fi
+  done
+done
+M="${PROJECT_ROOT}/cube_dataset/goal_images/vlm_start_goal/manifest.jsonl"
+ML=$(wc -l < "${M}")
+if [[ "${ML}" -ne 100 ]]; then
+  echo "FATAL: expected 100 lines in ${M}, got ${ML}"
+  exit 6
+fi
+echo "VERIFY OK: 100 samples x 4 files + manifest 100 lines"
+
+echo "=== done $(date) ==="

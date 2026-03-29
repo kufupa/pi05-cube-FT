@@ -1,0 +1,46 @@
+#!/bin/bash
+#PBS -N ogbench_cube_replay
+#PBS -l select=1:ncpus=8:mem=32gb:ngpus=1:gpu_type=A100
+#PBS -l walltime=04:00:00
+#PBS -j oe
+#PBS -o logs/ogbench_cube_replay.log
+#
+# Downloads OGBench cube play data under project/cube_dataset/, selects top-33 episodes,
+# writes HDF5, replays to MP4/NPZ. Uses stable-worldmodel venv (ogbench + mujoco).
+#
+# Dependencies (run interactively BEFORE qsub if possible):
+#   cd "$PROJECT" && stable-worldmodel/.venv/bin/python cube_dataset/download_and_replay_ogbench.py --preflight
+# Headless MuJoCo: EGL on GPU nodes is typical; override if your site uses OSMesa.
+# SSL: institutional proxies may need certs; script retries with unverified HTTPS unless OGBENCH_INSECURE_SSL=0.
+#
+# Adjust select=... if you prefer CPU-only (drop ngpus/gpu_type) and set MUJOCO_GL=osmesa where supported.
+
+set -euo pipefail
+
+# Project root = parent of scripts/pbs (two levels up from this file)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "${PROJECT_ROOT}"
+
+export MUJOCO_GL="${MUJOCO_GL:-egl}"
+
+mkdir -p logs cube_dataset/datasets cube_dataset/top_episodes cube_dataset/videos_frames
+
+PY="${PROJECT_ROOT}/stable-worldmodel/.venv/bin/python"
+CUBE_SCRIPT="${PROJECT_ROOT}/cube_dataset/download_and_replay_ogbench.py"
+
+if [[ ! -x "${PY}" ]]; then
+  echo "FATAL: missing ${PY} (create stable-worldmodel venv / install deps)."
+  exit 2
+fi
+
+echo "=== ogbench cube replay $(date) ==="
+echo "Host: $(hostname)"
+echo "PROJECT_ROOT: ${PROJECT_ROOT}"
+echo "MUJOCO_GL: ${MUJOCO_GL}"
+echo "Python: $(${PY} --version)"
+
+"${PY}" "${CUBE_SCRIPT}" --preflight
+"${PY}" "${CUBE_SCRIPT}"
+
+echo "=== done $(date) ==="

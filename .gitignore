@@ -8,6 +8,14 @@
 /tmp_venv*/
 /output/
 
+# OGBench / cube_dataset artifacts (scripts and README live in repo)
+cube_dataset/goal_images/
+cube_dataset/datasets/
+cube_dataset/videos_frames/
+cube_dataset/top_episodes/
+cube_dataset/gt_export/
+cube_dataset/*.log
+
 # Massive ML / dataset binaries (regenerate or store outside git)
 *.h5
 *.hdf5

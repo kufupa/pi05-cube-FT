@@ -1,0 +1,146 @@
+#!/bin/bash
+#PBS -N cube_gt_export
+#PBS -l select=1:ncpus=8:mem=48gb:ngpus=1
+#PBS -l walltime=06:00:00
+#PBS -j oe
+#PBS -o cube_dataset/gt_export/_pbs_logs/cube_gt_export_pbs_oe.txt
+#
+# Full GT export (stable-worldmodel venv) then Qwen3-VL instructions (uv).
+# Production only: no --smoke; VLAW_MOCK_REWARD must be unset.
+# Run smokes on a login node before qsub (see cube_dataset/README.md).
+#
+# Retry VLM only after a successful export: qsub -v SKIP_GT_EXPORT=1,GT_EXPORT_RUN_DIR=/path/to/run_* ...
+#
+set -euo pipefail
+
+# PBS copies this script to a spool dir; BASH_SOURCE is not under the repo. Always prefer PBS_O_WORKDIR.
+if [[ -n "${PBS_O_WORKDIR:-}" ]]; then
+  PROJECT_ROOT="${PBS_O_WORKDIR}"
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+fi
+cd "${PROJECT_ROOT}"
+
+# EasyBuild / HPC: stdlib ctypes may require libffi.so.8 for torch (uv run). Safe no-op if module missing.
+if command -v module &>/dev/null; then
+  module load libffi/3.4.4-GCCcore-13.2.0 2>/dev/null || true
+  module load bzip2/1.0.8-GCCcore-13.2.0 2>/dev/null || true
+fi
+
+# Batch nodes often have no system xvfb-run; without virtual X, MUJOCO_GL=egl hits broken EGL here (Python exit 1).
+# Load Xvfb module so xvfb-run exists when DISPLAY is unset.
+if [[ -z "${DISPLAY:-}" ]] && command -v module &>/dev/null; then
+  module load Xvfb/21.1.9-GCCcore-13.2.0 2>/dev/null \
+    || module load Xvfb/21.1.14-GCCcore-13.3.0 2>/dev/null \
+    || true
+fi
+
+export MUJOCO_GL="${MUJOCO_GL:-egl}"
+unset VLAW_MOCK_REWARD || true
+export VLAW_MOCK_REWARD=0
+
+# VLM step must use project uv env only (never bare python3 — avoids system libffi / wrong torch).
+# Export step: on batch nodes DISPLAY is often unset; xvfb-run provides a virtual X so MuJoCo can render
+# when MUJOCO_GL=egl is broken. Skip wrap if DISPLAY is already set.
+if [[ -z "${DISPLAY:-}" ]] && command -v xvfb-run &>/dev/null; then
+  XVF=(xvfb-run -a -s "-screen 0 1024x768x24")
+elif [[ -z "${DISPLAY:-}" ]]; then
+  echo "FATAL: DISPLAY unset and xvfb-run not on PATH after Xvfb module load. Export cannot use GLFW+X; EGL stack fails on this cluster."
+  exit 2
+else
+  XVF=()
+fi
+
+mkdir -p cube_dataset/gt_export/_pbs_logs cube_dataset/datasets
+
+PY_SW="${PROJECT_ROOT}/stable-worldmodel/.venv/bin/python"
+GT_EXPORT="${PROJECT_ROOT}/cube_dataset/gt_export.py"
+
+if [[ ! -x "${PY_SW}" ]]; then
+  echo "FATAL: missing ${PY_SW}"
+  exit 2
+fi
+
+echo "=== cube_gt_export $(date -u) ==="
+echo "Host: $(hostname)"
+echo "PBS_JOBID: ${PBS_JOBID:-}"
+echo "PROJECT_ROOT: ${PROJECT_ROOT}"
+echo "MUJOCO_GL: ${MUJOCO_GL}"
+command -v xvfb-run && echo "xvfb-run: ok" || echo "WARN: xvfb-run missing — export will use EGL (may fail on this stack)"
+
+PBS_LOG_DIR="${PROJECT_ROOT}/cube_dataset/gt_export/_pbs_logs"
+mkdir -p "${PBS_LOG_DIR}"
+LOG_BASENAME="gt_export_${PBS_JOBID:-manual}.log"
+
+if [[ "${SKIP_GT_EXPORT:-0}" == "1" ]]; then
+  RUN_DIR="${GT_EXPORT_RUN_DIR:-}"
+  if [[ -z "${RUN_DIR}" || ! -d "${RUN_DIR}" ]]; then
+    echo "FATAL: SKIP_GT_EXPORT=1 needs GT_EXPORT_RUN_DIR pointing at an existing run_* directory."
+    exit 2
+  fi
+  LOG_BASENAME="gt_export_vlm_only_${PBS_JOBID:-manual}.log"
+  echo "SKIP_GT_EXPORT=1 RUN_DIR=${RUN_DIR}"
+else
+  set +e
+  # Under xvfb, prefer GLFW + virtual X (EGL on batch nodes is often unset/broken).
+  if [[ ${#XVF[@]} -gt 0 ]]; then
+    EXPORT_OUT="$(MUJOCO_GL=glfw "${XVF[@]}" "${PY_SW}" "${GT_EXPORT}" 2>&1 | tee "${PBS_LOG_DIR}/${LOG_BASENAME}")"
+  else
+    EXPORT_OUT="$("${PY_SW}" "${GT_EXPORT}" 2>&1 | tee "${PBS_LOG_DIR}/${LOG_BASENAME}")"
+  fi
+  EXPORT_RC=${PIPESTATUS[0]}
+  set -e
+  echo "${EXPORT_OUT}"
+
+  if [[ "${EXPORT_RC}" -ne 0 ]]; then
+    echo "FATAL: gt_export.py exited ${EXPORT_RC}"
+    exit "${EXPORT_RC}"
+  fi
+
+  RUN_DIR="$(echo "${EXPORT_OUT}" | grep '^GT_EXPORT_RUN_DIR=' | tail -1 | cut -d= -f2-)"
+  if [[ -z "${RUN_DIR}" || ! -d "${RUN_DIR}" ]]; then
+    echo "FATAL: could not parse GT_EXPORT_RUN_DIR from export output"
+    exit 2
+  fi
+fi
+
+echo "RUN_DIR=${RUN_DIR}"
+
+if ! command -v nvidia-smi &>/dev/null; then
+  echo "FATAL: nvidia-smi not found (GPU required for VLM step)."
+  exit 2
+fi
+nvidia-smi || true
+
+PY_UV="${PROJECT_ROOT}/.venv/bin/python"
+if [[ ! -x "${PY_UV}" ]]; then
+  echo "FATAL: missing ${PY_UV} (run uv sync in project root)."
+  exit 2
+fi
+
+"${PY_UV}" -c "import torch; assert torch.cuda.is_available(), 'CUDA required for instructions'" \
+  || { echo "FATAL: project .venv torch.cuda.is_available() is False"; exit 3; }
+
+"${PY_UV}" "${PROJECT_ROOT}/scripts/generate_cube_gt_instructions.py" --run-dir "${RUN_DIR}" 2>&1 | tee -a "${PBS_LOG_DIR}/${LOG_BASENAME}"
+
+# Record PBS log path in run_meta.json
+"${PY_UV}" - <<PY
+import json
+from pathlib import Path
+run_dir = Path("${RUN_DIR}")
+meta_path = run_dir / "run_meta.json"
+log_path = Path("${PBS_LOG_DIR}") / "${LOG_BASENAME}"
+data = json.loads(meta_path.read_text(encoding="utf-8"))
+data["pbs_stdout_log"] = str(log_path.resolve())
+data["pbs_jobid"] = "${PBS_JOBID:-}"
+meta_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+dst = run_dir / "pbs_stdout.log"
+try:
+    dst.write_text(log_path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+except Exception as e:
+    print("warn: could not copy pbs log to run dir:", e)
+PY
+
+echo "=== done $(date -u) ==="
