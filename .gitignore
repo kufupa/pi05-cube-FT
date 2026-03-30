@@ -16,6 +16,9 @@ cube_dataset/top_episodes/
 cube_dataset/gt_export/
 # Pi0.5-DROID × OGBench closed-loop rollouts (MP4 + results.jsonl per sample)
 cube_dataset/pi05_rollouts/
+# Pi0.5 joint-target rollouts (MP4 covered by *.mp4; keep run_notes.md tracked)
+cube_dataset/pi05_joint_rollouts/results.jsonl
+cube_dataset/pi05_joint_rollouts/logs/
 cube_dataset/*.log
 
 # Massive ML / dataset binaries (regenerate or store outside git)
