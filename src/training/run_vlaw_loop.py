@@ -149,7 +149,7 @@ def _rm_backend() -> str:
         return "mock"
     if not torch.cuda.is_available():
         return "mock"
-    return "qwen2_vl_4bit"
+    return "qwen_vl_4bit"
 
 
 def main():
@@ -222,7 +222,11 @@ def main():
 
     wm = CtrlWorldModel(config["world_model_ckpt"])
     wm_ckpt_default = output_dir / "wm_predictor.pt"
-    wm_ckpt_path = wm_cfg.get("save_path", str(wm_ckpt_default))
+    wm_cfg_path = wm_cfg.get("save_path")
+    if wm_cfg_path:
+        wm_ckpt_path = str(output_dir / Path(wm_cfg_path).name)
+    else:
+        wm_ckpt_path = str(wm_ckpt_default)
     if Path(wm_ckpt_path).exists():
         try:
             wm.load_predictor(wm_ckpt_path)

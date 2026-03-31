@@ -49,10 +49,11 @@ class QwenRewardModel(nn.Module):
         model = None
         last_exc = None
         class_order = [
-            "Qwen2_5_VLForConditionalGeneration",
-            "Qwen2VLForConditionalGeneration",
+            "Qwen3VLForConditionalGeneration",
             "AutoModelForImageTextToText",
             "AutoModelForVision2Seq",
+            "Qwen2_5_VLForConditionalGeneration",
+            "Qwen2VLForConditionalGeneration",
         ]
         for class_name in class_order:
             try:
@@ -148,18 +149,21 @@ class QwenRewardModel(nn.Module):
         ]
 
         processor = self._processor
+        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        proc_kwargs: dict = {"text": [text], "padding": True, "return_tensors": "pt"}
         if process_vision_info is not None:
-            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            image_inputs, video_inputs = process_vision_info(messages)
-            inputs = processor(
-                text=[text],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt",
-            )
+            try:
+                image_inputs, video_inputs = process_vision_info(messages)
+                if image_inputs is not None:
+                    proc_kwargs["images"] = image_inputs
+                if video_inputs is not None:
+                    proc_kwargs["videos"] = video_inputs
+                inputs = processor(**proc_kwargs)
+            except Exception as exc:
+                # Qwen2-era processors sometimes want raw PIL lists; Qwen3 path is above.
+                print(f"QwenRewardModel: process_vision_info processor path failed ({exc!r}); trying videos=[frames].")
+                inputs = processor(text=[text], videos=[frames], padding=True, return_tensors="pt")
         else:
-            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = processor(text=[text], videos=[frames], padding=True, return_tensors="pt")
 
         dev = next(self._model.parameters()).device

@@ -3,11 +3,12 @@ name = "vlaw-droid"
 version = "0.1.0"
 description = "VLAW DROID single-task pipeline"
 authors = [{name = "Antigravity", email = "ai@example.com"}]
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "torch>=2.4",
     "torchvision",
     "protobuf>=4.25.3,<5",
-    "transformers>=4.53.0",
+    "transformers>=5.4.0",
     "diffusers",
     "accelerate",
     "bitsandbytes",

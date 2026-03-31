@@ -1,19 +1,19 @@
 vlaw:
   task_name: "stacking"
-  n_real_rollouts_wm: 50
-  wm_finetune_steps: 500
-  n_synthetic_trajectories: 20
+  n_real_rollouts_wm: 10
+  wm_finetune_steps: 100
+  n_synthetic_trajectories: 8
   rm_threshold: 0.5
-  policy_finetune_steps: 100
-  vlaw_iterations: 2
+  policy_finetune_steps: 50
+  vlaw_iterations: 1
   base_policy_ckpt: "gs://openpi-assets/checkpoints/pi05_droid"
   world_model_ckpt: "yjguo/Ctrl-World"
   reward_model_ckpt: "Qwen/Qwen3-VL-8B-Instruct"
 
 world_model:
   checkpoint_dir: "yjguo/Ctrl-World"
-  steps: 500
+  steps: 100
   batch_size: 4
   lr: 0.0001
-  max_episodes: 50
+  max_episodes: 10
   save_path: "output/wm_predictor.pt"

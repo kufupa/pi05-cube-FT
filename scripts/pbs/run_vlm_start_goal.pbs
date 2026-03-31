@@ -26,6 +26,7 @@ mkdir -p logs cube_dataset/goal_images/vlm_start_goal
 
 PY="${PROJECT_ROOT}/stable-worldmodel/.venv/bin/python"
 SAMPLE_SCRIPT="${PROJECT_ROOT}/cube_dataset/sample_start_goal_images.py"
+EXTEND_SCRIPT="${PROJECT_ROOT}/cube_dataset/extend_vlm_triptych.py"
 
 if [[ ! -x "${PY}" ]]; then
   echo "FATAL: missing ${PY}"
@@ -49,6 +50,10 @@ echo "Render: xvfb-run (MUJOCO_GL unset)"
 # Regenerate all samples (overwrite) so each PBS run proves full write, not skip.
 "${XVFB[@]}" "${PY}" "${SAMPLE_SCRIPT}" --n-samples 100 --no-skip-existing
 
+echo "--- VLA triptych (new files only; legacy PNGs/meta.json untouched) ---"
+"${XVFB[@]}" "${PY}" "${EXTEND_SCRIPT}" --smoke-test
+"${XVFB[@]}" "${PY}" "${EXTEND_SCRIPT}" --force
+
 # Verify deliverables
 OUT="${PROJECT_ROOT}/cube_dataset/goal_images/vlm_start_goal/cube-single-v0"
 N=$(find "${OUT}" -maxdepth 1 -type d -name 'sample_*' | wc -l)
@@ -70,6 +75,20 @@ if [[ "${ML}" -ne 100 ]]; then
   echo "FATAL: expected 100 lines in ${M}, got ${ML}"
   exit 6
 fi
-echo "VERIFY OK: 100 samples x 4 files + manifest 100 lines"
+for s in "${OUT}"/sample_*; do
+  for f in vla_start_clean.png vla_start_with_markers.png vla_goal_only.png vla_triptych.png vlm_triptych.json; do
+    if [[ ! -f "${s}/${f}" ]]; then
+      echo "FATAL: missing triptych output ${s}/${f}"
+      exit 7
+    fi
+  done
+done
+MT="${PROJECT_ROOT}/cube_dataset/goal_images/vlm_start_goal/manifest_triptych.jsonl"
+MTL=$(wc -l < "${MT}")
+if [[ "${MTL}" -ne 100 ]]; then
+  echo "FATAL: expected 100 lines in ${MT}, got ${MTL}"
+  exit 8
+fi
+echo "VERIFY OK: legacy 4+meta + triptych 5 + manifest_triptych 100 lines"
 
 echo "=== done $(date) ==="

@@ -3,7 +3,7 @@
 #PBS -l select=1:ncpus=8:mem=64gb:ngpus=1
 #PBS -l walltime=12:00:00
 #PBS -j oe
-#PBS -o cube_dataset/pi05_joint_rollouts/logs/pbs_joint.log
+#PBS -o logs/pi05_joint_rollouts.log
 #
 # Joint-target π0.5-DROID rollouts (7D) on cube-single-joint-target-v0.
 # No gpu_type lock — scheduler picks GPU. MuJoCo: xvfb + MUJOCO_GL=glfw.
@@ -23,11 +23,11 @@ fi
 export PYTHONPATH="${PROJECT_ROOT}"
 export MUJOCO_GL=glfw
 
-mkdir -p cube_dataset/pi05_joint_rollouts/logs
+OUT="${PI05_OUT_DIR:-${PROJECT_ROOT}/cube_dataset/pi05_joint_rollouts}"
+mkdir -p "${OUT}" logs
 
 PY="${PROJECT_ROOT}/stable-worldmodel/.venv/bin/python"
 ROLL_SCRIPT="${PROJECT_ROOT}/cube_dataset/run_pi05_ogbench_rollouts.py"
-OUT="${PROJECT_ROOT}/cube_dataset/pi05_joint_rollouts"
 
 if [[ ! -x "${PY}" ]]; then
   echo "FATAL: missing ${PY}"
@@ -48,8 +48,9 @@ echo "PROJECT_ROOT: ${PROJECT_ROOT}"
 
 CKPT="${PI05_OGBENCH_CHECKPOINT:-gs://openpi-assets/checkpoints/pi05_droid}"
 
-"${XVFB[@]}" "${PY}" "${ROLL_SCRIPT}" --smoke-test --control joint --checkpoint "${CKPT}"
-"${XVFB[@]}" "${PY}" "${ROLL_SCRIPT}" --control joint --n 20 --start-index 0 --out-dir "${OUT}" --checkpoint "${CKPT}"
+echo "OUT_DIR=${OUT} CKPT=${CKPT}"
+"${XVFB[@]}" "${PY}" "${ROLL_SCRIPT}" --smoke-test --control joint --require-openpi --checkpoint "${CKPT}"
+"${XVFB[@]}" "${PY}" "${ROLL_SCRIPT}" --control joint --n 20 --start-index 0 --out-dir "${OUT}" --require-openpi --checkpoint "${CKPT}"
 
 NMP4=$(find "${OUT}" -maxdepth 1 -type f -name 'sample_*.mp4' 2>/dev/null | wc -l)
 if [[ "${NMP4}" -lt 20 ]]; then

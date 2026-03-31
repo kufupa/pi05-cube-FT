@@ -1,0 +1,77 @@
+#!/bin/bash
+#PBS -N pi05_openpi_e2e
+#PBS -l select=1:ncpus=8:mem=64gb:ngpus=1
+#PBS -l walltime=24:00:00
+#PBS -j oe
+#PBS -o logs/pi05_openpi_end_to_end.log
+#
+# End-to-end: real π0.5-DROID (OpenPI) — EE smoke + EE batch + joint smoke + joint batch.
+# Fresh output dirs per run unless PI05_RUN_TAG is set. No gpu_type lock.
+# Env: PI05_OGBENCH_CHECKPOINT (default gs://...), PI05_RUN_TAG (optional suffix).
+#
+set -euo pipefail
+export PYTHONUNBUFFERED=1
+
+if [[ -n "${PBS_O_WORKDIR:-}" ]]; then
+  cd "${PBS_O_WORKDIR}"
+  PROJECT_ROOT="${PBS_O_WORKDIR}"
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  cd "${PROJECT_ROOT}"
+fi
+
+export PYTHONPATH="${PROJECT_ROOT}"
+export MUJOCO_GL=glfw
+
+TAG="${PI05_RUN_TAG:-$(date +%Y%m%d_%H%M%S)}"
+BASE="${PROJECT_ROOT}/cube_dataset/pi05_openpi_runs/run_${TAG}"
+OUT_EE="${PI05_OUT_DIR_EE:-${BASE}_ee}"
+OUT_JOINT="${PI05_OUT_DIR_JOINT:-${BASE}_joint}"
+CKPT="${PI05_OGBENCH_CHECKPOINT:-gs://openpi-assets/checkpoints/pi05_droid}"
+
+mkdir -p "${OUT_EE}" "${OUT_JOINT}" logs "${PROJECT_ROOT}/cube_dataset/pi05_openpi_runs"
+
+PY="${PROJECT_ROOT}/stable-worldmodel/.venv/bin/python"
+ROLL="${PROJECT_ROOT}/cube_dataset/run_pi05_ogbench_rollouts.py"
+
+if [[ ! -x "${PY}" ]]; then
+  echo "FATAL: missing ${PY}"
+  exit 2
+fi
+if ! command -v xvfb-run >/dev/null 2>&1; then
+  echo "FATAL: xvfb-run not found"
+  exit 2
+fi
+
+XVFB=(xvfb-run -a -s "-screen 0 1024x768x24")
+
+echo "=== pi05_openpi_end_to_end ${TAG} $(date) ==="
+echo "HOST=$(hostname) PROJECT_ROOT=${PROJECT_ROOT}"
+echo "OUT_EE=${OUT_EE}"
+echo "OUT_JOINT=${OUT_JOINT}"
+echo "CKPT=${CKPT}"
+command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi || true
+"${PY}" -c "import jax; print('jax devices:', jax.devices())" || true
+
+"${XVFB[@]}" "${PY}" "${ROLL}" --smoke-test --require-openpi --checkpoint "${CKPT}"
+"${XVFB[@]}" "${PY}" "${ROLL}" --smoke-test --control joint --require-openpi --checkpoint "${CKPT}"
+
+"${XVFB[@]}" "${PY}" "${ROLL}" --n 20 --start-index 0 --out-dir "${OUT_EE}" --require-openpi --checkpoint "${CKPT}"
+"${XVFB[@]}" "${PY}" "${ROLL}" --control joint --n 20 --start-index 0 --out-dir "${OUT_JOINT}" --require-openpi --checkpoint "${CKPT}"
+
+for OUT in "${OUT_EE}" "${OUT_JOINT}"; do
+  NMP4=$(find "${OUT}" -maxdepth 1 -type f -name 'sample_*.mp4' 2>/dev/null | wc -l)
+  if [[ "${NMP4}" -lt 20 ]]; then
+    echo "FATAL: expected 20 mp4 under ${OUT}, got ${NMP4}"
+    exit 4
+  fi
+  JL=$(wc -l < "${OUT}/results.jsonl")
+  if [[ "${JL}" -lt 20 ]]; then
+    echo "FATAL: expected 20 lines in ${OUT}/results.jsonl, got ${JL}"
+    exit 5
+  fi
+done
+
+echo "VERIFY OK: EE+JOINT batches complete"
+echo "=== done $(date) ==="

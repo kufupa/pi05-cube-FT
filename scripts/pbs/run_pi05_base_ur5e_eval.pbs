@@ -1,0 +1,78 @@
+#!/bin/bash
+#PBS -N pi05_base_ur5e_eval
+#PBS -q v1_small72
+#PBS -l select=1:ncpus=8:mem=64gb
+#PBS -l walltime=04:00:00
+#PBS -j oe
+#PBS -o logs/pi05_base_ur5e_eval.log
+#
+# Zero-shot pi0.5-base UR5e on OGBench cube-single-joint-target-v0:
+# - preflight smoke (require OpenPI)
+# - 20-episode joint-target rollout batch
+#
+set -euo pipefail
+export PYTHONUNBUFFERED=1
+
+if [[ -n "${PBS_O_WORKDIR:-}" ]]; then
+  cd "${PBS_O_WORKDIR}"
+  PROJECT_ROOT="${PBS_O_WORKDIR}"
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  cd "${PROJECT_ROOT}"
+fi
+
+export PYTHONPATH="${PROJECT_ROOT}"
+export MUJOCO_GL=glfw
+
+TAG="${PI05_RUN_TAG:-$(date +%Y%m%d_%H%M%S)}"
+OUT="${PI05_OUT_DIR:-${PROJECT_ROOT}/cube_dataset/pi05_openpi_runs/run_${TAG}_ur5e_joint}"
+CKPT="${PI05_OGBENCH_CHECKPOINT:-gs://openpi-assets/checkpoints/pi05_base}"
+
+mkdir -p "${OUT}" logs "${PROJECT_ROOT}/cube_dataset/pi05_openpi_runs"
+
+PY="${PROJECT_ROOT}/stable-worldmodel/.venv/bin/python"
+ROLL="${PROJECT_ROOT}/cube_dataset/run_pi05_base_ur5e_rollouts.py"
+
+if [[ ! -x "${PY}" ]]; then
+  echo "FATAL: missing ${PY}"
+  exit 2
+fi
+CERT="$("${PY}" -c "import certifi; print(certifi.where())" 2>/dev/null || true)"
+if [[ -n "${CERT}" ]]; then
+  export SSL_CERT_FILE="${CERT}"
+  export REQUESTS_CA_BUNDLE="${CERT}"
+fi
+if ! command -v xvfb-run >/dev/null 2>&1; then
+  echo "FATAL: xvfb-run not found"
+  exit 2
+fi
+
+XVFB=(xvfb-run -a -s "-screen 0 1024x768x24")
+
+echo "=== pi05_base_ur5e_eval ${TAG} $(date) ==="
+echo "HOST=$(hostname) PROJECT_ROOT=${PROJECT_ROOT}"
+echo "OUT=${OUT}"
+echo "CKPT=${CKPT}"
+command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi || true
+"${PY}" -c "import jax; print('jax devices:', jax.devices())" || true
+
+echo "--- smoke test ---"
+"${XVFB[@]}" "${PY}" "${ROLL}" --smoke-test --require-openpi --checkpoint "${CKPT}"
+
+echo "--- 20 episode batch ---"
+"${XVFB[@]}" "${PY}" "${ROLL}" --n 20 --start-index 0 --out-dir "${OUT}" --require-openpi --checkpoint "${CKPT}"
+
+NMP4=$(ls -1 "${OUT}"/sample_*.mp4 2>/dev/null | wc -l || true)
+if [[ "${NMP4}" -lt 20 ]]; then
+  echo "FATAL: expected >=20 mp4 under ${OUT}, got ${NMP4}"
+  exit 4
+fi
+JL=$(wc -l < "${OUT}/results.jsonl")
+if [[ "${JL}" -lt 20 ]]; then
+  echo "FATAL: expected >=20 lines in ${OUT}/results.jsonl, got ${JL}"
+  exit 5
+fi
+
+echo "VERIFY OK: UR5e 20-episode batch complete"
+echo "=== done $(date) ==="

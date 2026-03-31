@@ -1,0 +1,21 @@
+#!/bin/bash
+#PBS -N vlaw_qwen3
+#PBS -l select=1:ncpus=8:mem=64gb:ngpus=1
+#PBS -l walltime=04:00:00
+#PBS -j oe
+# Log: <jobname>.o<JOBID> in submission cwd (unique per job; avoid clobbering)
+
+set -euo pipefail
+cd "${PBS_O_WORKDIR:-/rds/general/user/aa6622/home/project}"
+
+module load libffi/3.4.4-GCCcore-13.2.0 2>/dev/null || true
+module load Python/3.11.5-GCCcore-13.2.0 2>/dev/null || true
+export UV_PYTHON="${EBROOTPYTHON}/bin/python3"
+
+unset VLAW_MOCK_REWARD || true
+PROJ="${PBS_O_WORKDIR:-/rds/general/user/aa6622/home/project}"
+export PYTHONPATH="${PROJ}${PYTHONPATH:+:$PYTHONPATH}"
+
+RUN="output/vlaw_qwen3_${PBS_JOBID}"
+export RUN
+bash scripts/run_vlaw_qwen3_isolated.sh

@@ -55,19 +55,19 @@ echo "RUN_DIR: $RUN_DIR"
 nvidia-smi || true
 git rev-parse --short HEAD 2>/dev/null | sed 's/^/git_commit: /' || echo "git_commit: unknown"
 
-uv run python scripts/smoke_env_check.py || {
+uv run --no-sync python scripts/smoke_env_check.py || {
   echo "FATAL: smoke_env_check"
   exit 3
 }
 
-PYTHONPATH="$PBS_O_WORKDIR" uv run python scripts/smoke/preflight_login.py \
+PYTHONPATH="$PBS_O_WORKDIR" uv run --no-sync python scripts/smoke/preflight_login.py \
   --output "$RUN_PRECHECK_JSON" \
   --strict-imports "torch,openpi" || {
   echo "FATAL: preflight_login"
   exit 4
 }
 
-uv run python src/training/run_vlaw_loop.py \
+uv run --no-sync python src/training/run_vlaw_loop.py \
   --config configs/droid_single_task_vlaw.yaml \
   --output-dir "$RUN_OUTPUT_DIR" \
   --results-path "$RUN_RESULTS_JSON" \
@@ -76,7 +76,7 @@ uv run python src/training/run_vlaw_loop.py \
   exit 6
 }
 
-uv run python plot_results.py \
+uv run --no-sync python plot_results.py \
   --results "$RUN_RESULTS_JSON" \
   --out "$RUN_PLOT_PATH" \
   --base-real "$PBS_O_WORKDIR/results_base_real.json" || {

@@ -17,6 +17,8 @@ then copy OpenPI's patched HF modules into ``site-packages/transformers/`` (see 
 PBS uses ``MUJOCO_GL=glfw`` + xvfb; JAX uses the requested GPU.
 
 Default checkpoint: gs://openpi-assets/checkpoints/pi05_droid (override with --checkpoint or PI05_OGBENCH_CHECKPOINT).
+
+Use ``--require-openpi`` with smoke or batch to exit non-zero if OpenPI fails to load (avoids silent heuristic rollouts).
 """
 from __future__ import annotations
 
@@ -242,6 +244,7 @@ def smoke_test(
     control: str = "ee",
     joint_scale: float = 0.05,
     gripper_a8_index: int = DEFAULT_GRIPPER_A8_INDEX,
+    require_openpi: bool = False,
 ) -> None:
     print(f"=== pi05_ogbench smoke (control={control}) ===")
     assert_display_or_mujoco_gl()
@@ -285,6 +288,13 @@ def smoke_test(
             sys.exit(6)
 
         policy = Pi05DroidPolicy(checkpoint_path=checkpoint)
+        if require_openpi and not policy.uses_openpi():
+            reason = policy._openpi_failed_reason or "unknown"
+            print(
+                f"FATAL: --require-openpi but OpenPI did not load: {reason}",
+                file=sys.stderr,
+            )
+            sys.exit(8)
         observation = {
             "obs": rgb,
             "state": st,
@@ -388,6 +398,11 @@ def main() -> None:
         default=200,
         help="Max steps per episode (cube-single-v0 default horizon)",
     )
+    parser.add_argument(
+        "--require-openpi",
+        action="store_true",
+        help="Exit non-zero if OpenPI checkpoint did not load (no heuristic fallback)",
+    )
     args = parser.parse_args()
 
     if args.smoke_test:
@@ -396,6 +411,7 @@ def main() -> None:
             control=args.control,
             joint_scale=args.joint_scale,
             gripper_a8_index=args.gripper_a8_index,
+            require_openpi=args.require_openpi,
         )
         return
 
@@ -428,6 +444,13 @@ def main() -> None:
 
     policy = Pi05DroidPolicy(checkpoint_path=args.checkpoint)
     uses_openpi = policy.uses_openpi()
+    if args.require_openpi and not uses_openpi:
+        reason = policy._openpi_failed_reason or "unknown"
+        print(
+            f"FATAL: --require-openpi but OpenPI did not load: {reason}",
+            file=sys.stderr,
+        )
+        sys.exit(8)
 
     make_kw: dict[str, Any] = dict(ob_type="states", render_mode="rgb_array")
     if args.control == "joint":
