@@ -54,10 +54,9 @@ def build_state_7(env) -> "torch.Tensor":
     return torch.from_numpy(s).view(1, 7)
 
 
-def render_chw01(env) -> "torch.Tensor":
+def _frame_to_chw01(frame) -> "torch.Tensor":
     import torch
 
-    frame = env.render()
     u8 = np.asarray(frame)
     if u8.dtype != np.uint8:
         u8 = np.clip(u8, 0, 255).astype(np.uint8)
@@ -68,15 +67,30 @@ def render_chw01(env) -> "torch.Tensor":
     return torch.from_numpy(chw).unsqueeze(0)
 
 
+def render_chw01(env) -> "torch.Tensor":
+    return _frame_to_chw01(env.render())
+
+
+def render_wrist_chw01(env) -> "torch.Tensor":
+    raw = env.unwrapped
+    if hasattr(raw, "render_wrist"):
+        return _frame_to_chw01(raw.render_wrist())
+    return _frame_to_chw01(np.zeros((200, 200, 3), dtype=np.uint8))
+
+
 def map_pi05_ur5e_to_ogbench_joint7(
     a7: "torch.Tensor",
     current_qpos6: np.ndarray,
     *,
     joint_scale: float,
 ) -> np.ndarray:
+    from src.envs.droid.observation_openpi_ur5e import JOINT_0_OFFSET
+
     a = a7.detach().cpu().float().reshape(-1).numpy()
     if a.size < 7:
         raise ValueError(f"expected at least 7 action dims, got {a.size}")
+
+    a[0] -= JOINT_0_OFFSET
 
     out = np.zeros(7, dtype=np.float32)
     arm_delta = (a[:6].astype(np.float64) - current_qpos6.astype(np.float64)) / float(joint_scale)
@@ -149,9 +163,11 @@ def rollout_one(
 
     for t in range(max_steps):
         rgb = render_chw01(env)
+        wrist_rgb = render_wrist_chw01(env)
         joints6, g_open = get_joints6_and_gripper_open01(env)
         observation = {
             "obs": rgb,
+            "wrist_obs": wrist_rgb,
             "state": build_state_7(env),
             "joints_6": joints6,
             "gripper_open_01": g_open,
@@ -224,9 +240,11 @@ def smoke_test(checkpoint: str, *, require_openpi: bool = False, joint_scale: fl
             print(f"FATAL: --require-openpi but OpenPI did not load: {reason}", file=sys.stderr)
             sys.exit(8)
 
+        wrist_rgb = render_wrist_chw01(env)
         joints6, g_open = get_joints6_and_gripper_open01(env)
         observation = {
             "obs": rgb,
+            "wrist_obs": wrist_rgb,
             "state": st,
             "joints_6": joints6,
             "gripper_open_01": g_open,

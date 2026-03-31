@@ -76,7 +76,7 @@ class Pi05UR5ePolicy:
                         case _model.ModelType.PI0 | _model.ModelType.PI05:
                             names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
                             images = (base_image, wrist_image, np.zeros_like(base_image))
-                            image_masks = (np.True_, np.False_, np.False_)
+                            image_masks = (np.True_, np.True_, np.False_)
                         case _model.ModelType.PI0_FAST:
                             names = ("base_0_rgb", "base_1_rgb", "wrist_0_rgb")
                             images = (base_image, np.zeros_like(base_image), wrist_image)
@@ -158,7 +158,10 @@ class Pi05UR5ePolicy:
             gripper_open_01 = float(observation.get("gripper_open_01", 1.0))
 
         inst = observation.get("instruction", "") or ""
-        return build_openpi_ur5e_request_from_tensors(obs, joints_6, gripper_open_01, inst)
+        wrist_obs = observation.get("wrist_obs")
+        return build_openpi_ur5e_request_from_tensors(
+            obs, joints_6, gripper_open_01, inst, wrist_image_chw=wrist_obs,
+        )
 
     def _compute_action_tensor(self, observation: dict) -> torch.Tensor:
         if self._openpi_policy is not None:

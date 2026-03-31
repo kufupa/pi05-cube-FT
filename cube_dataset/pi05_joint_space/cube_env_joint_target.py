@@ -11,6 +11,8 @@ from ogbench.manipspace.envs.cube_env import CubeEnv
 class CubeEnvJointTargetDelta(CubeEnv):
     """UR5 arm: delta joint targets from clipped [-1,1]^6 scaled by joint_scale; gripper ctrl = 255 * [0,1]."""
 
+    WRIST_CAM_NAME = "wrist_cam"
+
     def __init__(
         self,
         env_type: str = "single",
@@ -23,6 +25,25 @@ class CubeEnvJointTargetDelta(CubeEnv):
         self._jnt_low: np.ndarray | None = None
         self._jnt_high: np.ndarray | None = None
         super().__init__(env_type=env_type, permute_blocks=permute_blocks, **kwargs)
+
+    def build_mjcf_model(self):
+        arena = super().build_mjcf_model()
+        wrist_body = arena.find("body", "ur5e/wrist_3_link")
+        if wrist_body is not None:
+            # Past the flange (~0.1 m along +Y) and elevated so we look down at the table,
+            # not straight through the gripper (previous pos sat between wrist and tool).
+            # xyaxes: image x = link +X; image y blends link +Y/+Z so -Z_cam points ~forward+down.
+            wrist_body.add(
+                "camera",
+                name=self.WRIST_CAM_NAME,
+                pos="0 0.14 0.10",
+                xyaxes="1 0 0  0 0.55 0.83",
+                fovy="58",
+            )
+        return arena
+
+    def render_wrist(self) -> np.ndarray:
+        return self.render(camera=f"ur5e/{self.WRIST_CAM_NAME}")
 
     @property
     def action_space(self) -> Box:

@@ -1,6 +1,6 @@
 #!/bin/bash
 #PBS -N pi05_base_ur5e_gpu
-#PBS -l select=1:ncpus=4:mem=64gb:ngpus=1
+#PBS -l select=1:ncpus=4:mem=64gb:ngpus=1:gpu_type=RTX6000
 #PBS -l walltime=04:00:00
 #PBS -j oe
 #PBS -o logs/pi05_base_ur5e_eval_gpu.log
@@ -28,8 +28,14 @@ export MUJOCO_GL=glfw
 TAG="${PI05_RUN_TAG:-$(date +%Y%m%d_%H%M%S)}"
 OUT="${PI05_OUT_DIR:-${PROJECT_ROOT}/cube_dataset/pi05_openpi_runs/run_${TAG}_ur5e_joint_gpu}"
 CKPT="${PI05_OGBENCH_CHECKPOINT:-gs://openpi-assets/checkpoints/pi05_base}"
+START="${PI05_START_INDEX:-0}"
+N_EP="${PI05_NUM_EPISODES:-20}"
+# After this job, require at least this many lines/mp4 under OUT (default: START+N_EP for full slice).
+VERIFY_MIN="${PI05_VERIFY_MIN_COUNT:-$((START + N_EP))}"
 
 mkdir -p "${OUT}" logs "${PROJECT_ROOT}/cube_dataset/pi05_openpi_runs"
+# Copy of this job's stdout is also appended here (see tail of script).
+RUN_LOG="${PROJECT_ROOT}/logs/pi05_base_ur5e_eval_gpu_${TAG}.log"
 
 PY="${PROJECT_ROOT}/stable-worldmodel/.venv/bin/python"
 ROLL="${PROJECT_ROOT}/cube_dataset/run_pi05_base_ur5e_rollouts.py"
@@ -56,25 +62,42 @@ echo "=== pi05_base_ur5e_eval_gpu ${TAG} $(date) ==="
 echo "HOST=$(hostname) PROJECT_ROOT=${PROJECT_ROOT}"
 echo "OUT=${OUT}"
 echo "CKPT=${CKPT}"
+echo "START_INDEX=${START} NUM_EPISODES=${N_EP} VERIFY_MIN=${VERIFY_MIN}"
 command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi || true
 "${PY}" -c "import jax; print('jax devices:', jax.devices())" || true
 
-echo "--- smoke test ---"
-"${XVFB[@]}" "${PY}" "${ROLL}" --smoke-test --require-openpi --checkpoint "${CKPT}"
+if [[ "${PI05_SKIP_SMOKE:-0}" != "1" ]]; then
+  echo "--- smoke test ---"
+  "${XVFB[@]}" "${PY}" "${ROLL}" --smoke-test --require-openpi --checkpoint "${CKPT}"
+else
+  echo "--- smoke test skipped (PI05_SKIP_SMOKE=1) ---"
+fi
 
-echo "--- 20 episode batch ---"
-"${XVFB[@]}" "${PY}" "${ROLL}" --n 20 --start-index 0 --out-dir "${OUT}" --require-openpi --checkpoint "${CKPT}"
+echo "--- rollout batch start-index=${START} n=${N_EP} ---"
+"${XVFB[@]}" "${PY}" "${ROLL}" --n "${N_EP}" --start-index "${START}" --out-dir "${OUT}" --require-openpi --checkpoint "${CKPT}"
 
 NMP4=$(ls -1 "${OUT}"/sample_*.mp4 2>/dev/null | wc -l || true)
-if [[ "${NMP4}" -lt 20 ]]; then
-  echo "FATAL: expected >=20 mp4 under ${OUT}, got ${NMP4}"
+if [[ "${NMP4}" -lt "${VERIFY_MIN}" ]]; then
+  echo "FATAL: expected >=${VERIFY_MIN} mp4 under ${OUT}, got ${NMP4}"
   exit 4
 fi
-JL=$(wc -l < "${OUT}/results.jsonl")
-if [[ "${JL}" -lt 20 ]]; then
-  echo "FATAL: expected >=20 lines in ${OUT}/results.jsonl, got ${JL}"
+JL=$(wc -l < "${OUT}/results.jsonl" 2>/dev/null | tr -d ' ' || echo 0)
+if [[ "${JL}" -lt "${VERIFY_MIN}" ]]; then
+  echo "FATAL: expected >=${VERIFY_MIN} lines in ${OUT}/results.jsonl, got ${JL}"
   exit 5
 fi
 
-echo "VERIFY OK: UR5e 20-episode batch complete"
+echo "VERIFY OK: UR5e batch complete (>=${VERIFY_MIN} episodes under ${OUT})"
 echo "=== done $(date) ==="
+
+if [[ -n "${PBS_JOBID:-}" ]] && [[ -f "${PBS_JOBNAME:-}" ]]; then
+  :  # PBS joins oe; primary log is #PBS -o path
+fi
+# Preserve a tag-stamped copy for the shared logs/pi05_base_ur5e_eval_gpu.log case.
+
+if [[ -f "${RUN_LOG:-}" ]]; then
+  {
+    echo "=== pi05_base_ur5e_eval_gpu ${TAG} copy $(date) job=${PBS_JOBID:-local} ==="
+    echo "OUT=${OUT} START=${START} N_EP=${N_EP}"
+  } >>"${RUN_LOG}"
+fi
