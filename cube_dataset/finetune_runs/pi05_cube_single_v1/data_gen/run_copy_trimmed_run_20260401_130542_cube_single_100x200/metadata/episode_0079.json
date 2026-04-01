@@ -1,0 +1,19 @@
+{
+  "rank": 79,
+  "episode_index": 79,
+  "range_start": 79079,
+  "range_end_exclusive": 80080,
+  "episode_length_transitions": 1001,
+  "max_steps_requested": 200,
+  "effective_steps_used": 200,
+  "state_index_start": 79079,
+  "state_index_end_inclusive": 79279,
+  "n_frames": 201,
+  "fps": 10,
+  "render_size": 160,
+  "files": {
+    "scene": "scene_ep_0079.mp4",
+    "wrist": "wrist_ep_0079.mp4",
+    "side_by_side": "side_by_side_ep_0079.mp4"
+  }
+}

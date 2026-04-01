@@ -1,0 +1,19 @@
+{
+  "rank": 58,
+  "episode_index": 58,
+  "range_start": 58058,
+  "range_end_exclusive": 59059,
+  "episode_length_transitions": 1001,
+  "max_steps_requested": 200,
+  "effective_steps_used": 200,
+  "state_index_start": 58058,
+  "state_index_end_inclusive": 58258,
+  "n_frames": 201,
+  "fps": 10,
+  "render_size": 160,
+  "files": {
+    "scene": "scene_ep_0058.mp4",
+    "wrist": "wrist_ep_0058.mp4",
+    "side_by_side": "side_by_side_ep_0058.mp4"
+  }
+}

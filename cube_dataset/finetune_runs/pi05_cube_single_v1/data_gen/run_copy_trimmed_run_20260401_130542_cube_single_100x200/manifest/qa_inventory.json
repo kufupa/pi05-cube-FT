@@ -1,0 +1,21 @@
+{
+  "expected_episodes": 100,
+  "scene_count": 100,
+  "wrist_count": 100,
+  "side_by_side_count": 100,
+  "metadata_count": 100,
+  "frame_count_min": 201,
+  "frame_count_max": 201,
+  "sample_episode_ids_for_visual_spotcheck": [
+    0,
+    11,
+    22,
+    33,
+    44,
+    55,
+    66,
+    77,
+    88,
+    99
+  ]
+}
