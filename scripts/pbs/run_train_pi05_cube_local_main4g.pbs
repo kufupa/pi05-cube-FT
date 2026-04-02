@@ -1,0 +1,155 @@
+#!/bin/bash
+#PBS -N pi05_cube_main4g
+#PBS -l select=1:ncpus=8:mem=128gb:ngpus=4
+#PBS -l walltime=08:00:00
+#PBS -j oe
+#PBS -o logs/pi05_cube_main4g.log
+
+set -euo pipefail
+export PYTHONUNBUFFERED=1
+
+if [[ -n "${PBS_O_WORKDIR:-}" ]]; then
+  cd "${PBS_O_WORKDIR}"
+  PROJECT_ROOT="${PBS_O_WORKDIR}"
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  cd "${PROJECT_ROOT}"
+fi
+
+RUN_TAG="${PI05_CUBE_RUN_TAG:-run_$(date +%Y%m%d_%H%M%S)}"
+SRC_RUN="${PI05_CUBE_SRC_RUN:-${PROJECT_ROOT}/cube_dataset/finetune_runs/pi05_cube_single_v1/data_gen/run_copy_trimmed_run_20260401_130542_cube_single_100x200}"
+BUILD_ROOT="${PI05_CUBE_BUILD_ROOT:-${PROJECT_ROOT}/cube_dataset/finetune_runs/pi05_cube_single_v2/local_build/${RUN_TAG}}"
+RUN_ROOT="${BUILD_ROOT}/main4g"
+REPO_ID="${PI05_CUBE_REPO_ID:-local/pi05_cube_single_v2_${RUN_TAG}}"
+EXP_NAME="${PI05_CUBE_EXP_NAME:-main4g}"
+SRC_NPZ="${PI05_CUBE_SOURCE_NPZ:-${PROJECT_ROOT}/cube_dataset/datasets/cube-single-play-v0.npz}"
+
+mkdir -p "${RUN_ROOT}" "${PROJECT_ROOT}/logs"
+
+PYTHONPATH_BASE="${PROJECT_ROOT}:${PROJECT_ROOT}/external/openpi/src"
+PRE="${PROJECT_ROOT}/cube_dataset/finetune_pi05_cube_single_v2/check_preflight.py"
+VAL="${PROJECT_ROOT}/cube_dataset/finetune_pi05_cube_single_v2/validate_trimmed_run.py"
+CONV="${PROJECT_ROOT}/cube_dataset/finetune_pi05_cube_single_v2/convert_run_to_lerobot_cube.py"
+NORM="${PROJECT_ROOT}/cube_dataset/finetune_pi05_cube_single_v2/compute_norm_stats_cube.py"
+CONF="${PROJECT_ROOT}/cube_dataset/finetune_pi05_cube_single_v2/build_pi05_lora_config.py"
+TRAIN="${PROJECT_ROOT}/cube_dataset/finetune_pi05_cube_single_v2/train_pi05_lora_cube.py"
+MON="${PROJECT_ROOT}/cube_dataset/finetune_pi05_cube_single_v2/monitor_train_progress.py"
+
+echo "=== pi05 cube local main4g $(date) ==="
+echo "PROJECT_ROOT=${PROJECT_ROOT}"
+echo "RUN_TAG=${RUN_TAG}"
+echo "SRC_RUN=${SRC_RUN}"
+echo "RUN_ROOT=${RUN_ROOT}"
+echo "REPO_ID=${REPO_ID}"
+command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi || true
+
+# Stage L1
+cd "${PROJECT_ROOT}/external/openpi"
+if ! PYTHONPATH="${PYTHONPATH_BASE}" uv run python -c "import lerobot" >/dev/null 2>&1; then
+  echo "Installing missing lerobot dependency into uv environment..."
+  uv pip install "lerobot @ git+https://github.com/huggingface/lerobot@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+fi
+PYTHONPATH="${PYTHONPATH_BASE}" uv run python "${PRE}" --run-dir "${SRC_RUN}" --run-root "${RUN_ROOT}" --min-free-gb 40
+
+# Stage L2
+PYTHONPATH="${PYTHONPATH_BASE}" uv run python "${VAL}" --run-dir "${SRC_RUN}" --run-root "${RUN_ROOT}" --expected-videos 300
+
+# Stage L3
+PYTHONPATH="${PYTHONPATH_BASE}" uv run python "${CONV}" \
+  --run-dir "${SRC_RUN}" \
+  --run-root "${RUN_ROOT}" \
+  --source-npz "${SRC_NPZ}" \
+  --repo-id "${REPO_ID}" \
+  --prompt "pick up the red cube" \
+  --fps 10 \
+  --max-episodes 100
+
+# Stage L4
+PYTHONPATH="${PYTHONPATH_BASE}" uv run python "${NORM}" --run-root "${RUN_ROOT}" --repo-id "${REPO_ID}" --batch-size 16 --max-frames 30000
+PYTHONPATH="${PYTHONPATH_BASE}" uv run python "${CONF}" \
+  --run-root "${RUN_ROOT}" \
+  --repo-id "${REPO_ID}" \
+  --exp-name "${EXP_NAME}" \
+  --batch-size 64 \
+  --num-train-steps 10000 \
+  --log-interval 100 \
+  --save-interval 2000 \
+  --keep-period 2000 \
+  --fsdp-devices 4
+
+# Stage L5 smoke
+PYTHONPATH="${PYTHONPATH_BASE}" uv run python "${TRAIN}" \
+  --run-root "${RUN_ROOT}" \
+  --repo-id "${REPO_ID}" \
+  --exp-name "${EXP_NAME}_smoke" \
+  --batch-size 8 \
+  --num-train-steps 100 \
+  --log-interval 20 \
+  --save-interval 50 \
+  --keep-period 50 \
+  --fsdp-devices 1 \
+  --smoke-steps 100
+
+# Collision guard for main run.
+MAIN_CKPT="${RUN_ROOT}/checkpoints/pi05_cube_single_v2_lora/${EXP_NAME}"
+if [[ -d "${MAIN_CKPT}" ]]; then
+  echo "FATAL: checkpoint dir already exists: ${MAIN_CKPT}"
+  exit 11
+fi
+
+STDOUT_LOG="${RUN_ROOT}/train_stdout.log"
+PYTHONPATH="${PYTHONPATH_BASE}" python "${MON}" \
+  --stdout-log "${STDOUT_LOG}" \
+  --out-dir "${RUN_ROOT}" \
+  --total-steps 10000 \
+  --save-interval 2000 \
+  --checkpoint-dir "${MAIN_CKPT}" \
+  --poll-sec 2 \
+  --idle-timeout-sec 1800 &
+MON_PID=$!
+
+set +e
+PYTHONPATH="${PYTHONPATH_BASE}" uv run python "${TRAIN}" \
+  --run-root "${RUN_ROOT}" \
+  --repo-id "${REPO_ID}" \
+  --exp-name "${EXP_NAME}" \
+  --batch-size 64 \
+  --num-train-steps 10000 \
+  --log-interval 100 \
+  --save-interval 2000 \
+  --keep-period 2000 \
+  --fsdp-devices 4 2>&1 | tee "${STDOUT_LOG}"
+TRAIN_EXIT=${PIPESTATUS[0]}
+set -e
+
+wait "${MON_PID}" || true
+
+METRICS_LOG="${RUN_ROOT}/metrics_step.log"
+N_LOG=$(awk 'END{print NR+0}' "${METRICS_LOG}" 2>/dev/null || echo 0)
+MAX_STEP=$(find "${RUN_ROOT}/checkpoints/pi05_cube_single_v2_lora/${EXP_NAME}" -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | awk '/^[0-9]+$/{if($1>m)m=$1}END{print m+0}')
+cat > "${RUN_ROOT}/local_gate_report.json" <<EOF
+{
+  "train_exit": ${TRAIN_EXIT},
+  "metrics_log_lines": ${N_LOG},
+  "max_checkpoint_step": ${MAX_STEP},
+  "gate_pass": $( [[ "${N_LOG}" -ge 2 && "${MAX_STEP}" -ge 2000 && "${TRAIN_EXIT}" -eq 0 ]] && echo true || echo false )
+}
+EOF
+
+if [[ "${TRAIN_EXIT}" -ne 0 ]]; then
+  echo "FATAL: training failed with exit=${TRAIN_EXIT}"
+  exit "${TRAIN_EXIT}"
+fi
+if [[ "${N_LOG}" -lt 2 ]]; then
+  echo "FATAL: expected >=2 metric logs, got ${N_LOG}"
+  exit 12
+fi
+if [[ "${MAX_STEP}" -lt 2000 ]]; then
+  echo "FATAL: expected checkpoint >=2000, got ${MAX_STEP}"
+  exit 13
+fi
+
+echo "LOCAL GATE PASS: logs>=2 and checkpoint>=2000"
+echo "=== done $(date) ==="
+

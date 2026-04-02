@@ -1,0 +1,50 @@
+#!/bin/bash
+#PBS -N pi05_cube_eval20
+#PBS -l select=1:ncpus=4:mem=64gb:ngpus=1
+#PBS -l walltime=04:00:00
+#PBS -j oe
+#PBS -o logs/pi05_cube_eval20.log
+
+set -euo pipefail
+export PYTHONUNBUFFERED=1
+
+if [[ -n "${PBS_O_WORKDIR:-}" ]]; then
+  cd "${PBS_O_WORKDIR}"
+  PROJECT_ROOT="${PBS_O_WORKDIR}"
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  cd "${PROJECT_ROOT}"
+fi
+
+RUN_TAG="${PI05_CUBE_RUN_TAG:-latest}"
+SHARED_ROOT="${PI05_CUBE_SHARED_ROOT:-${PROJECT_ROOT}/cube_dataset/finetune_runs/pi05_cube_single_v2/local_build/${RUN_TAG}/main4g}"
+EVAL_ROOT="${PI05_CUBE_EVAL_ROOT:-${PROJECT_ROOT}/cube_dataset/finetune_runs/pi05_cube_single_v2/local_build/${RUN_TAG}/eval20}"
+EXP_NAME="${PI05_CUBE_EXP_NAME:-main4g}"
+EPISODES="${PI05_CUBE_EVAL_EPISODES:-20}"
+
+mkdir -p "${EVAL_ROOT}" "${PROJECT_ROOT}/logs"
+PYTHONPATH_BASE="${PROJECT_ROOT}:${PROJECT_ROOT}/external/openpi/src"
+EVAL="${PROJECT_ROOT}/cube_dataset/finetune_pi05_cube_single_v2/eval_pi05_lora_cube.py"
+
+CHECKPOINT="${PI05_CUBE_CHECKPOINT:-${SHARED_ROOT}/checkpoints/pi05_cube_single_v2_lora/${EXP_NAME}}"
+if [[ ! -d "${CHECKPOINT}" ]]; then
+  echo "FATAL: checkpoint directory not found: ${CHECKPOINT}"
+  exit 2
+fi
+
+echo "=== pi05 cube eval20 $(date) ==="
+echo "PROJECT_ROOT=${PROJECT_ROOT}"
+echo "CHECKPOINT=${CHECKPOINT}"
+echo "EVAL_ROOT=${EVAL_ROOT}"
+
+cd "${PROJECT_ROOT}/external/openpi"
+PYTHONPATH="${PYTHONPATH_BASE}" uv run python "${EVAL}" \
+  --project-root "${PROJECT_ROOT}" \
+  --run-root "${EVAL_ROOT}" \
+  --checkpoint "${CHECKPOINT}" \
+  --episodes "${EPISODES}" \
+  --require-openpi
+
+echo "=== done $(date) ==="
+
