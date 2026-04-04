@@ -1,0 +1,44 @@
+{
+  "stages": [
+    {
+      "stage": "stage00_preflight.slurm",
+      "job_id": "<unsubmitted>"
+    },
+    {
+      "stage": "stage01_install_lerobot_mw.slurm",
+      "job_id": "<unsubmitted>"
+    },
+    {
+      "stage": "stage02_baseline_pushv3_eval.slurm",
+      "job_id": "<unsubmitted>"
+    },
+    {
+      "stage": "stage03_install_jepa_wms.slurm",
+      "job_id": "<unsubmitted>"
+    },
+    {
+      "stage": "stage04_bridge_dataset_build.slurm",
+      "job_id": "<unsubmitted>"
+    },
+    {
+      "stage": "stage05_train_stageA_real_only.slurm",
+      "job_id": "<unsubmitted>"
+    },
+    {
+      "stage": "stage06_train_stageB_jepa_mix.slurm",
+      "job_id": "<unsubmitted>"
+    },
+    {
+      "stage": "stage07_vgg_gatecheck.slurm",
+      "job_id": "<unsubmitted>"
+    },
+    {
+      "stage": "stage08_train_stageC_vgg_aux.slurm",
+      "job_id": "<unsubmitted>"
+    },
+    {
+      "stage": "stage09_final_eval_and_bundle.slurm",
+      "job_id": "<unsubmitted>"
+    }
+  ]
+}

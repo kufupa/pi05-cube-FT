@@ -1,0 +1,13 @@
+Hi Christos:
+
+
+
+From the SmolVLA paper, they FT SmolVLA for MetaWorld and report results there, but they don’t link a Meta‑World checkpoint in the paper text itself. 
+
+I found this SmolVLA MetaWorld checkpoint on Hugging Face
+
+jadechoghari/smolvla_metaworld
+
+, uploaded by engineer on the LeRobot team. 
+
+In my own eval run it succeeded with 20% on MetaWorld.

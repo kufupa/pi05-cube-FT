@@ -1,0 +1,113 @@
+{
+  "per_task": [
+    {
+      "task_group": "push-v3",
+      "task_id": 0,
+      "metrics": {
+        "sum_rewards": [
+          19.195783977784522,
+          24.208926249184984,
+          26.080223562258965,
+          271.9655346698612,
+          24.243846879887997,
+          37.14734513815574,
+          29.627359930191574,
+          20.800043522332658,
+          17.88066102506284,
+          17.441572056159217,
+          41.68147415575437,
+          21.00429741425168,
+          18.552481400343286,
+          24.23904361053856,
+          22.840377541269834
+        ],
+        "max_rewards": [
+          0.16465400465904012,
+          0.7684068414876454,
+          0.657057189302007,
+          10.0,
+          0.31619473444434554,
+          0.7214965811866032,
+          0.32954177707971105,
+          0.15633720165987086,
+          0.2176482493921739,
+          0.31986174779440985,
+          0.5778926802626472,
+          0.2913419381265148,
+          0.2632835295161034,
+          0.33961777336550647,
+          0.6993314589777965
+        ],
+        "successes": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "video_paths": [
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_0.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_1.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_2.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_3.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_4.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_5.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_6.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_7.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_8.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_9.mp4"
+        ]
+      }
+    }
+  ],
+  "per_group": {
+    "push-v3": {
+      "avg_sum_reward": 41.127264742202506,
+      "avg_max_reward": 1.054844380483625,
+      "pc_success": 6.666666666666667,
+      "n_episodes": 15,
+      "video_paths": [
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_0.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_1.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_2.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_3.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_4.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_5.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_6.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_7.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_8.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_9.mp4"
+      ]
+    }
+  },
+  "overall": {
+    "avg_sum_reward": 41.127264742202506,
+    "avg_max_reward": 1.054844380483625,
+    "pc_success": 6.666666666666667,
+    "n_episodes": 15,
+    "eval_s": 2730.4392149448395,
+    "eval_ep_s": 182.02928102811177,
+    "video_paths": [
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_0.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_1.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_2.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_3.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_4.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_5.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_6.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_7.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_8.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline/run_20260403T201101Z_ep15_vtrue/videos/push-v3_0/eval_episode_9.mp4"
+    ]
+  }
+}

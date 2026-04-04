@@ -1,0 +1,113 @@
+{
+  "per_task": [
+    {
+      "task_group": "push-v3",
+      "task_id": 0,
+      "metrics": {
+        "sum_rewards": [
+          30.964552844542972,
+          25.95162555694086,
+          20.131612101314523,
+          24.408902415430596,
+          24.015225212775466,
+          18.558478845951484,
+          14.682577260093035,
+          17.44137558272252,
+          30.374984492353413,
+          19.381223780038418,
+          19.728614825917564,
+          46.91213197678867,
+          20.777473789666832,
+          79.9285198813133,
+          19.37972330921007
+        ],
+        "max_rewards": [
+          0.5002528366172527,
+          0.23932001633936778,
+          0.16644078646507438,
+          0.4029437333261436,
+          0.7324307197348121,
+          0.3920414068424944,
+          0.1321738245236689,
+          0.27305168072428676,
+          0.6601725382037913,
+          0.2684842801318024,
+          0.270146348495463,
+          10.0,
+          0.15952258394170052,
+          3.0342216558369075,
+          0.14315471987965675
+        ],
+        "successes": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false
+        ],
+        "video_paths": [
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_0.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_1.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_2.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_3.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_4.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_5.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_6.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_7.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_8.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_9.mp4"
+        ]
+      }
+    }
+  ],
+  "per_group": {
+    "push-v3": {
+      "avg_sum_reward": 27.50913479167065,
+      "avg_max_reward": 1.1582904754041616,
+      "pc_success": 6.666666666666667,
+      "n_episodes": 15,
+      "video_paths": [
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_0.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_1.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_2.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_3.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_4.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_5.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_6.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_7.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_8.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_9.mp4"
+      ]
+    }
+  },
+  "overall": {
+    "avg_sum_reward": 27.50913479167065,
+    "avg_max_reward": 1.1582904754041616,
+    "pc_success": 6.666666666666667,
+    "n_episodes": 15,
+    "eval_s": 2771.9756610393524,
+    "eval_ep_s": 184.79837741851807,
+    "video_paths": [
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_0.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_1.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_2.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_3.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_4.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_5.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_6.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_7.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_8.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/phase06_baseline_seed1000/run_20260403T232146Z_ep15_vtrue/videos/push-v3_0/eval_episode_9.mp4"
+    ]
+  }
+}
