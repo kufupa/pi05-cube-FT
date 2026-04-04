@@ -1,24 +1,32 @@
+import os
+
 import torch
-from src.vla.pi05_libero import Pi05LiberoPolicy
+
+from src.vla.pi05_ur5e import Pi05UR5ePolicy
 
 def main():
-    config = {"pi05_checkpoint_dir": "checkpoints/pi05/libero_base"}
-    print("Loading pi0.5 policy...")
-    policy_wrapper = Pi05LiberoPolicy(config)
-    
-    # Create fake observations
+    checkpoint = os.environ.get("PI05_SMOKE_CHECKPOINT", "checkpoints/pi05/libero_base")
+    require_openpi = os.environ.get("PI05_SMOKE_REQUIRE_OPENPI", "").strip().lower() in {"1", "true", "yes"}
+
+    print(f"Loading pi0.5 policy wrapper from: {checkpoint}")
+    policy_wrapper = Pi05UR5ePolicy(checkpoint)
+
+    # Fake observation matching UR5e wrapper expectations.
     obs_dict = {
-        "rgb": torch.zeros((1, 3, 256, 256), dtype=torch.float32),
-        "state": torch.zeros((1, 15), dtype=torch.float32),
-        "prev_action": torch.zeros((1, 7), dtype=torch.float32),
+        "obs": torch.zeros((3, 256, 256), dtype=torch.float32),
+        "wrist_obs": torch.zeros((3, 256, 256), dtype=torch.float32),
+        "joints_6": torch.zeros((6,), dtype=torch.float32),
+        "gripper_open_01": 1.0,
+        "instruction": "stack red block on blue",
     }
-    instruction = "stack red block on blue"
-    
-    print(f"Running inference with instruction: '{instruction}'")
-    action = policy_wrapper.act(obs_dict, instruction)
-    
+
+    print("Running inference...")
+    action = policy_wrapper.act(obs_dict)
+
     assert action.shape == torch.Size([1, 7]), f"Expected shape [1, 7], got {action.shape}"
-    print("SUCCESS: π₀.₅ LIBERO loaded and rollout shape correct.")
+    if require_openpi:
+        assert policy_wrapper.uses_openpi(), "OpenPI failed to load but PI05_SMOKE_REQUIRE_OPENPI=1"
+    print(f"SUCCESS: pi0.5 wrapper produced action shape [1,7], openpi_loaded={policy_wrapper.uses_openpi()}")
 
 if __name__ == "__main__":
     main()

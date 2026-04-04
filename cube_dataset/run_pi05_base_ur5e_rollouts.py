@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 DEFAULT_CHECKPOINT = "gs://openpi-assets/checkpoints/pi05_base"
-INSTRUCTION = "pick up the solid red cube"
+INSTRUCTION = "pick up the red cube"
 
 
 def _project_root() -> Path:
@@ -169,7 +169,8 @@ def rollout_one(
             "obs": rgb,
             "wrist_obs": wrist_rgb,
             "state": build_state_7(env),
-            "joints_6": joints6,
+            # Pass a copy so downstream transforms cannot mutate rollout state by aliasing.
+            "joints_6": joints6.copy(),
             "gripper_open_01": g_open,
             "instruction": INSTRUCTION,
             "timestep": t,

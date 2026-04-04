@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import time
 from pathlib import Path
 
@@ -35,6 +36,8 @@ def main() -> None:
 
     run_root = args.run_root.resolve()
     run_root.mkdir(parents=True, exist_ok=True)
+    # Keep local LeRobot datasets under run_root on /vol/bitbucket.
+    os.environ.setdefault("LEROBOT_HOME", str(run_root / "lerobot_home"))
 
     steps = int(args.smoke_steps) if int(args.smoke_steps) > 0 else int(args.num_train_steps)
     config = build_train_config(

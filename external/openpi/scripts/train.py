@@ -1,6 +1,7 @@
 import dataclasses
 import functools
 import logging
+import os
 import platform
 from typing import Any
 
@@ -200,7 +201,16 @@ def main(config: _config.TrainConfig):
             f"Batch size {config.batch_size} must be divisible by the number of devices {jax.device_count()}."
         )
 
-    jax.config.update("jax_compilation_cache_dir", str(epath.Path("~/.cache/jax").expanduser()))
+    cache_override = os.environ.get("JAX_COMPILATION_CACHE_DIR")
+    if not cache_override:
+        xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+        if xdg_cache_home:
+            cache_override = str(epath.Path(xdg_cache_home) / "jax")
+        else:
+            cache_override = str(epath.Path("~/.cache/jax").expanduser())
+    cache_dir = epath.Path(cache_override).expanduser()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    jax.config.update("jax_compilation_cache_dir", str(cache_dir))
 
     rng = jax.random.key(config.seed)
     train_rng, init_rng = jax.random.split(rng)

@@ -8,7 +8,7 @@ dependencies = [
     "torch>=2.4",
     "torchvision",
     "protobuf>=4.25.3,<5",
-    "transformers>=5.4.0",
+    "transformers>=4.53.2,<5",
     "diffusers",
     "accelerate",
     "bitsandbytes",

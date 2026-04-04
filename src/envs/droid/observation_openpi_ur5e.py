@@ -50,7 +50,8 @@ def build_openpi_ur5e_request_from_tensors(
     wrist_image_chw=None,
 ) -> dict:
     """Build flat UR5e request dict expected by Pi05UR5ePolicy transforms."""
-    j = np.asarray(joints_6, dtype=np.float32).reshape(-1)
+    # Copy to avoid mutating caller-owned buffers (rollout uses joints_6 again for env deltas).
+    j = np.asarray(joints_6, dtype=np.float32).reshape(-1).copy()
     if j.size != 6:
         raise ValueError(f"joints_6 must have 6 values, got {j.size}")
 

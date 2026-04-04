@@ -1,6 +1,31 @@
-#!/bin/bash
-source ~/miniforge3/bin/activate robocasa_env
-pip install -q huggingface_hub[cli]
-huggingface-cli download --repo-type model lerobot/pi05_libero_base \
-  --local-dir checkpoints/pi05/libero_base \
-  --local-dir-use-symlinks False
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_PATH="${VENV_PATH:-${ROOT}/stable-worldmodel/.venv}"
+PY="${VENV_PATH}/bin/python"
+ROOT_CACHE="${ROOT}/.cache"
+
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${ROOT_CACHE}}"
+export HF_HOME="${HF_HOME:-${XDG_CACHE_HOME}/huggingface}"
+export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}/transformers}"
+export OPENPI_DATA_HOME="${OPENPI_DATA_HOME:-${XDG_CACHE_HOME}/openpi}"
+mkdir -p "${HF_HOME}" "${TRANSFORMERS_CACHE}" "${OPENPI_DATA_HOME}"
+
+if [[ ! -x "${PY}" ]]; then
+  echo "FATAL: missing ${PY}. Run: bash scripts/bootstrap_hpc_env.sh"
+  exit 2
+fi
+
+"${PY}" - <<'PY'
+from huggingface_hub import snapshot_download
+
+print("Downloading pi0.5 LIBERO checkpoint...")
+snapshot_download(
+    repo_id="lerobot/pi05_libero_base",
+    repo_type="model",
+    local_dir="checkpoints/pi05/libero_base",
+    local_dir_use_symlinks=False,
+)
+print("Done.")
+PY

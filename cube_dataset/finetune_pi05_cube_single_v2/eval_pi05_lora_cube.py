@@ -10,6 +10,24 @@ import sys
 from pathlib import Path
 
 
+def _resolve_checkpoint_path(path_str: str) -> str:
+    """Resolve checkpoint roots to the latest numeric step directory when needed."""
+    p = Path(path_str).expanduser()
+
+    # Already a direct step/checkpoint directory (contains params metadata).
+    if (p / "params" / "_METADATA").exists():
+        return str(p)
+
+    # If a checkpoint root was passed (e.g. .../main1g), select latest numeric step.
+    step_dirs = [d for d in p.iterdir() if d.is_dir() and d.name.isdigit()] if p.exists() else []
+    step_dirs = [d for d in step_dirs if (d / "params" / "_METADATA").exists()]
+    if step_dirs:
+        latest = max(step_dirs, key=lambda d: int(d.name))
+        return str(latest)
+
+    return path_str
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", type=Path, required=True)
@@ -28,13 +46,14 @@ def main() -> None:
     run_root.mkdir(parents=True, exist_ok=True)
     eval_dir = run_root / "eval_20ep"
     eval_dir.mkdir(parents=True, exist_ok=True)
+    resolved_checkpoint = _resolve_checkpoint_path(args.checkpoint)
 
     rollouts = project_root / "cube_dataset" / "run_pi05_base_ur5e_rollouts.py"
     cmd = [
         sys.executable,
         str(rollouts),
         "--checkpoint",
-        args.checkpoint,
+        resolved_checkpoint,
         "--out-dir",
         str(eval_dir),
         "--n",
@@ -65,7 +84,8 @@ def main() -> None:
     success_count = sum(1 for r in rows if bool(r.get("success", False)))
     summary = {
         "status": "pass" if len(rows) >= args.episodes else "fail",
-        "checkpoint": args.checkpoint,
+        "checkpoint_requested": args.checkpoint,
+        "checkpoint_resolved": resolved_checkpoint,
         "episodes_requested": args.episodes,
         "episodes_found": len(rows),
         "success_count": success_count,

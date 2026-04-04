@@ -67,10 +67,10 @@ def main() -> None:
     run_root = args.run_root.resolve()
     run_root.mkdir(parents=True, exist_ok=True)
 
-    _ensure_lerobot_imports()
     lerobot_home = run_root / "lerobot_home"
     lerobot_home.mkdir(parents=True, exist_ok=True)
     os.environ["LEROBOT_HOME"] = str(lerobot_home)
+    _ensure_lerobot_imports()
 
     from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 

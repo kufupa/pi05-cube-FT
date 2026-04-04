@@ -103,6 +103,37 @@ class Pi05UR5ePolicy:
                 def __call__(self, data: dict) -> dict:
                     return {"actions": np.asarray(data["actions"][:, :7])}
 
+            def _resolve_ckpt_dir(path_value: str) -> pathlib.Path:
+                """Accept either a concrete step dir or a checkpoint root."""
+                p = pathlib.Path(path_value).expanduser()
+                if (p / "params" / "_METADATA").exists():
+                    return p
+                step_dirs = [d for d in p.iterdir() if d.is_dir() and d.name.isdigit()] if p.exists() else []
+                step_dirs = [d for d in step_dirs if (d / "params" / "_METADATA").exists()]
+                if step_dirs:
+                    return max(step_dirs, key=lambda d: int(d.name))
+                return p
+
+            def _find_local_norm_stats_dir(ckpt_path: pathlib.Path) -> pathlib.Path | None:
+                """Find norm_stats under checkpoint assets (local finetune first, then fallback)."""
+                assets_dir = ckpt_path / "assets"
+                if not assets_dir.exists():
+                    return None
+                # Local fine-tune checkpoints in this repo store stats under assets/local/<repo_id>/.
+                local_candidates = sorted((assets_dir / "local").rglob("norm_stats.json")) if (assets_dir / "local").exists() else []
+                if local_candidates:
+                    local_candidates.sort(key=lambda p: (len(p.parts), str(p)))
+                    return local_candidates[0].parent
+                preferred = assets_dir / "ur5e" / "norm_stats.json"
+                if preferred.exists():
+                    return preferred.parent
+                candidates = sorted(assets_dir.rglob("norm_stats.json"))
+                if not candidates:
+                    return None
+                # Prefer shallower paths for deterministic behavior.
+                candidates.sort(key=lambda p: (len(p.parts), str(p)))
+                return candidates[0].parent
+
             path_str = str(checkpoint_path)
             norm_stats = None
             if path_str.startswith("gs://openpi-assets/checkpoints/"):
@@ -111,9 +142,21 @@ class Pi05UR5ePolicy:
                 ckpt_dir = pathlib.Path(params_dir).parent
                 norm_stats = _normalize.load(assets_ur5e_dir)
             else:
-                ckpt_dir = path_str
+                ckpt_dir = _resolve_ckpt_dir(path_str)
+                local_norm_dir = _find_local_norm_stats_dir(ckpt_dir)
+                if local_norm_dir is not None:
+                    norm_stats = _normalize.load(local_norm_dir)
 
             base_cfg = openpi_train_config.get_config("pi05_droid")
+            model_cfg = dataclasses.replace(
+                base_cfg.model,
+                pi05=True,
+                discrete_state_input=False,
+                paligemma_variant="gemma_2b_lora",
+                action_expert_variant="gemma_300m_lora",
+                action_horizon=16,
+                action_dim=32,
+            )
             delta_mask = _transforms.make_bool_mask(6, -1)
             ur5_data_cfg = openpi_train_config.SimpleDataConfig(
                 assets=openpi_train_config.AssetsConfig(asset_id="ur5e"),
@@ -126,7 +169,7 @@ class Pi05UR5ePolicy:
                 ),
                 base_config=openpi_train_config.DataConfig(prompt_from_task=True),
             )
-            cfg = dataclasses.replace(base_cfg, name="pi05_base_ur5e_inference", data=ur5_data_cfg)
+            cfg = dataclasses.replace(base_cfg, name="pi05_base_ur5e_inference", model=model_cfg, data=ur5_data_cfg)
             self._openpi_policy = policy_config.create_trained_policy(cfg, ckpt_dir, norm_stats=norm_stats)
             print(f"Pi05UR5ePolicy: OpenPI loaded config='pi05_base_ur5e_inference' dir={ckpt_dir!r}")
         except Exception as exc:

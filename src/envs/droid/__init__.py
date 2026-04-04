@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 from pathlib import Path
-import tfrecord
 import cv2
 
 
@@ -39,6 +38,8 @@ def _decode_instruction(raw_episode, T):
 
 def get_droid_dataset(task_name="stacking", split="train", max_episodes=20, debug=False):
     """Load real DROID RLDS episodes natively using tfrecord package."""
+    import tfrecord
+
     data_dir = Path("data/droid_sample/droid_100")
     episodes = []
 
