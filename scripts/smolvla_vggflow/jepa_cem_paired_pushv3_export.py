@@ -9,15 +9,14 @@ See docs/CEM_PAIRED_PUSHV3_SCHEMA.md for the contract.
 - **Latent / CEM arm:** Records per-step CEM metadata and a latent summary from WM unroll
   when available; if WM is unavailable, writes explicit wm_skipped metadata (still
   export_mode cem_paired_push_v3 for pipeline wiring).
-- **CUDA:** By default WM+CEM runs only if ``torch.cuda.is_available()`` (clear logs on CPU
-  login nodes). Override for debugging: ``SMOLVLA_JEPA_EXPORT_FORCE_CPU_WM=1`` (slow).
+- **CUDA:** WM+CEM runs whenever the hub model loads; ``device`` follows ``--device`` /
+  availability (CPU ok for **smoke** / dev; Slurm phase07 should still use a GPU job).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -277,12 +276,8 @@ def rollout_episode(
             "planner_metadata": {},
         }
 
-        # Default: WM+CEM only when CUDA is available (matches phase07 “export wants GPU” intent).
-        # Set SMOLVLA_JEPA_EXPORT_FORCE_CPU_WM=1 to run encode/unroll on CPU for local debugging.
-        wm_cem_allowed = torch.cuda.is_available() or (
-            os.environ.get("SMOLVLA_JEPA_EXPORT_FORCE_CPU_WM", "").strip() == "1"
-        )
-        if model is not None and preproc is not None and wm_cem_allowed:
+        # WM+CEM whenever the world model loaded (CPU is fine for smoke tests; use GPU in Slurm).
+        if model is not None and preproc is not None:
             try:
                 vis = _render_to_wm_visual(env, device)
                 if vis is None:
@@ -318,13 +313,6 @@ def rollout_episode(
         else:
             if wm_bundle is None:
                 step_record["planner_metadata"] = {"wm_skipped": True}
-            elif model is not None and preproc is not None and not wm_cem_allowed:
-                step_record["planner_metadata"] = {
-                    "wm_skipped": True,
-                    "reason": "no_cuda",
-                    "cuda_available": False,
-                    "hint": "WM+CEM path requires CUDA unless SMOLVLA_JEPA_EXPORT_FORCE_CPU_WM=1",
-                }
             a_exec = heuristic_push_action(obs, env)
 
         a_list = np.asarray(a_exec, dtype=np.float32).reshape(-1).tolist()
