@@ -9,6 +9,11 @@
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  REPO_ROOT="${SLURM_SUBMIT_DIR}"
+else
+  REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+fi
 cd "${REPO_ROOT}"
-bash "/vol/bitbucket/aa6622/pi05-cube-FT/scripts/smolvla_vggflow/run_stage.sh" stage10_train_loop
+export SMOLVLA_TRAIN_VARIANT=b
+bash "${REPO_ROOT}/scripts/smolvla_vggflow/run_stage.sh" stage10_train_loop
