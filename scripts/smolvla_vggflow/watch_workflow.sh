@@ -3,31 +3,43 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <workflow.json>"
+  echo "Usage: $0 <workflow.json> [watch_workflow.py options before job expansion...]"
+  echo "Example: $0 runs/workflow_x.json --poll 90 --auto-resubmit --max-retries 2"
   exit 2
 fi
 WORKFLOW_JSON="$1"
+shift
 
-python3 - <<PY
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# If the path is relative and missing from cwd, resolve against repo root (common: runs/workflow_*.json).
+if [[ "${WORKFLOW_JSON}" != /* ]] && [[ ! -f "${WORKFLOW_JSON}" ]] && [[ -f "${REPO_ROOT}/${WORKFLOW_JSON}" ]]; then
+  WORKFLOW_JSON="${REPO_ROOT}/${WORKFLOW_JSON}"
+fi
+
+export WORKFLOW_JSON
+mapfile -t JOB_IDS < <(
+  python3 - <<'PY'
 import json
-import subprocess
-from pathlib import Path
-import sys
 import os
+import sys
 
-path = Path(os.environ["WORKFLOW_JSON"])
-data = json.loads(path.read_text(encoding="utf-8"))
-job_ids = [str(item["job_id"]) for item in data.get("stages", []) if item.get("job_id")]
-if not job_ids:
-    raise SystemExit("No job ids in workflow")
-print(f"watching {len(job_ids)} jobs")
-subprocess.call(
-    [
-        "python3",
-        (path.parent.parent / "scripts" / "smolvla_vggflow" / "watch_workflow.py").resolve().as_posix(),
-        "--job-ids",
-        *job_ids,
-    ]
-)
+path = os.environ["WORKFLOW_JSON"]
+data = json.loads(open(path, encoding="utf-8").read())
+rid = data.get("run_id") or data.get("smolvla_run_id")
+if rid:
+    print(f"[watch_workflow] workflow run_id from JSON: {rid}", file=sys.stderr)
+for item in data.get("stages", []):
+    jid = item.get("job_id")
+    if jid and str(jid) != "<unsubmitted>":
+        print(str(jid))
 PY
+)
 
+if [[ ${#JOB_IDS[@]} -eq 0 ]]; then
+  echo "No job ids in workflow (or dry-run placeholders)." >&2
+  exit 1
+fi
+
+echo "watching ${#JOB_IDS[@]} jobs"
+# Pass "$@" before --job-ids so optional flags (e.g. --poll) are not swallowed by nargs="+".
+exec python3 "${SCRIPT_DIR}/watch_workflow.py" "$@" --job-ids "${JOB_IDS[@]}"

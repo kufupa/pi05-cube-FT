@@ -14,7 +14,7 @@ echo "[bootstrap] venv path: ${VENV_PATH}"
 echo "[bootstrap] python bin: ${PYTHON_BIN}"
 echo "[bootstrap] cache root: ${ROOT_CACHE}"
 
-# Keep all caches/artifacts inside /vol/bitbucket-backed repo storage.
+# Prefer repo-local caches (override XDG_CACHE_HOME if you use a shared workspace volume).
 mkdir -p "${ROOT_CACHE}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${ROOT_CACHE}}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-${XDG_CACHE_HOME}/uv}"
