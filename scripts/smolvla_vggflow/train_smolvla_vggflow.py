@@ -4,21 +4,205 @@
 from __future__ import annotations
 
 import argparse
+import re
 import os
 import shlex
 import json
 import subprocess
+import sys
 import textwrap
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, List
 
 import torch
 from torch import nn
 
 
-def _run(cmd: str) -> None:
+def _compat_pythonpath(extra: str = "") -> str:
+    compat_root = Path(__file__).resolve().parent / "compat"
+    parts: List[str] = [str(compat_root)]
+    if extra:
+        parts.append(str(extra))
+    existing = os.environ.get("PYTHONPATH", "").strip()
+    if existing:
+        parts.append(existing)
+    return ":".join(parts)
+
+
+_LEROBOT_TRAIN_FLAGS: set[str] | None = None
+
+
+def _normalize_flag_name(name: str) -> str:
+    clean = name.strip()
+    if clean.startswith("--"):
+        clean = clean[2:]
+    for ch in (".",):
+        clean = clean.replace(ch, "_")
+    return clean.replace("-", "_")
+
+
+def _train_flags_from_help(train_bin: str) -> set[str]:
+    global _LEROBOT_TRAIN_FLAGS
+    if _LEROBOT_TRAIN_FLAGS is not None:
+        return _LEROBOT_TRAIN_FLAGS
+
+    try:
+        raw = subprocess.check_output(
+            [train_bin, "--help"],
+            text=True,
+            stderr=subprocess.STDOUT,
+            check=False,
+            env=os.environ.copy(),
+        )
+        flags: set[str] = set()
+        for token in re.findall(r"--[A-Za-z0-9][A-Za-z0-9._-]*", raw):
+            flags.add(_normalize_flag_name(token))
+        _LEROBOT_TRAIN_FLAGS = flags
+        return flags
+    except Exception:
+        _LEROBOT_TRAIN_FLAGS = set()
+        return _LEROBOT_TRAIN_FLAGS
+
+
+def _append_flag_if_supported(cmd_parts: List[str], train_flags: set[str], flag: str, value: str | int | float | None) -> None:
+    if value is None:
+        return
+    name = _normalize_flag_name(flag)
+    for candidate in {name, name.replace("_", "-"), name.replace("_", ".")}:
+        if _normalize_flag_name(candidate) in train_flags:
+            if isinstance(value, bool):
+                if value:
+                    cmd_parts.append(f"--{candidate}")
+                return
+            cmd_parts.append(f"--{candidate}")
+            cmd_parts.append(str(value))
+            return
+    # Keep behavior resilient on older trainer builds where CLI options vary.
+    if isinstance(value, bool):
+        return
+    print(f"WARN: unsupported lerobot option '{flag}', skipping from command")
+
+
+def _extract_metrics_from_line(line: str) -> tuple[int | None, dict[str, float]]:
+    step = None
+    metrics: dict[str, float] = {}
+
+    step_match = re.search(r"\b(?:step|global_step)\b[:\s=]?(\d+)", line, flags=re.IGNORECASE)
+    if step_match:
+        try:
+            step = int(step_match.group(1))
+        except Exception:
+            step = None
+
+    for token in re.finditer(
+        r"\b(?P<name>loss|vgg_aux_match_loss|vgg_aux_value_loss|vgg_aux_total|aux_loss|base_loss|match_loss|value_loss)\b\s*[:=]\s*(?P<value>-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)",
+        line,
+    ):
+        name = token.group("name").lower()
+        if name in {"match_loss", "value_loss"}:
+            name = f"vgg_aux_{name}"
+        try:
+            metrics[name] = float(token.group("value"))
+        except Exception:
+            continue
+    return step, metrics
+
+
+def _run(cmd: str, metrics_path: Path | None = None, log_interval: int = 100) -> None:
     print(f"[train-orch] running: {cmd}")
-    subprocess.check_call(cmd, shell=True)
+    start = time.time()
+    if metrics_path is None:
+        subprocess.check_call(cmd, shell=True)
+        return
+
+    proc = subprocess.Popen(
+        cmd,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=os.environ.copy(),
+    )
+    if proc.stdout is None:
+        raise RuntimeError("training process failed to create stdout pipe")
+
+    last_step: int | None = None
+    prev_log_step: int | None = None
+    prev_log_time: float | None = None
+    sec_per_100_samples: list[float] = []
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    timing_path = metrics_path.parent / "timing_100step.jsonl"
+    with metrics_path.open("w", encoding="utf-8") as mf, timing_path.open("w", encoding="utf-8") as tf:
+        for line in proc.stdout:
+            print(line, end="")
+            step, metrics = _extract_metrics_from_line(line)
+            if step is not None:
+                last_step = step
+                if log_interval > 0 and step % log_interval != 0:
+                    continue
+                now = time.time()
+                row: dict[str, Any] = {
+                    "step": step,
+                    "elapsed_sec": now - start,
+                    "optimizer_state": "unknown",
+                }
+                if metrics:
+                    row.update(metrics)
+                mf.write(json.dumps(row) + "\n")
+                mf.flush()
+                if log_interval > 0 and prev_log_step is not None and prev_log_time is not None:
+                    ds = float(step - prev_log_step)
+                    if ds > 0:
+                        dt = now - prev_log_time
+                        sec_per_100 = dt / ds * 100.0
+                        sec_per_100_samples.append(sec_per_100)
+                        tf.write(
+                            json.dumps(
+                                {
+                                    "schema_version": "timing_window_v1",
+                                    "window_end_step": step,
+                                    "window_start_step": prev_log_step,
+                                    "window_elapsed_sec": dt,
+                                    "steps_in_window": int(ds),
+                                    "sec_per_100_steps": sec_per_100,
+                                }
+                            )
+                            + "\n"
+                        )
+                        tf.flush()
+                prev_log_step = step
+                prev_log_time = now
+
+        proc.wait()
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, cmd)
+        if last_step is not None and log_interval <= 0:
+            row = {
+                "step": last_step,
+                "elapsed_sec": time.time() - start,
+                "optimizer_state": "unknown",
+            }
+            mf.write(json.dumps(row) + "\n")
+        if sec_per_100_samples:
+            sorted_s = sorted(sec_per_100_samples)
+            n = len(sorted_s)
+
+            def _pct(p: float) -> float:
+                if n == 0:
+                    return 0.0
+                i = min(n - 1, max(0, int(p * (n - 1))))
+                return float(sorted_s[i])
+
+            rollup = {
+                "schema_version": "timing_rollup_v1",
+                "wall_time_sec": time.time() - start,
+                "n_windows": n,
+                "p50_sec_per_100_steps": _pct(0.50),
+                "p90_sec_per_100_steps": _pct(0.90),
+                "p95_sec_per_100_steps": _pct(0.95),
+            }
+            (metrics_path.parent / "timing_rollup.json").write_text(json.dumps(rollup, indent=2), encoding="utf-8")
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -26,13 +210,12 @@ def _write_json(path: Path, payload: Any) -> None:
 
 
 def _infer_dataset_repo_id(dataset_root: Path) -> str:
-    safe = str(dataset_root).strip().replace("/", "_").replace(" ", "_")
-    if safe.startswith("."):
-        safe = safe.lstrip(".")
-    safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in safe)
-    if not safe:
-        safe = "smolvla_dataset"
-    return f"local/{safe}"
+    forced = os.environ.get("SMOLVLA_DATASET_REPO_ID", "").strip()
+    if forced:
+        return forced
+    # LeRobot still validates `repo_id` against Hub refs even for local `--dataset.root` paths.
+    # Use a stable public repo id unless the caller overrides via SMOLVLA_DATASET_REPO_ID.
+    return "lerobot/pusht"
 
 
 def _trace_value_head(
@@ -348,35 +531,112 @@ def _build_base_policy_cmd(
     train_root: Path,
     output_dir: Path,
     args,
+    extra_py_path: Path | str | None = None,
 ) -> str:
     ckpt = args.checkpoint
     repo_id = _infer_dataset_repo_id(train_root)
-    return (
-        f"{args.lerobot_train_bin} "
-        f"--policy.type smolvla "
-        f"--policy.pretrained_path {ckpt} "
-        f"--policy.load_vlm_weights true "
-        f"--policy.vlm_model_name HuggingFaceTB/SmolVLM2-500M-Instruct "
-        f"--policy.expert_width_multiplier 0.5 "
-        f"--policy.self_attn_every_n_layers 0 "
-        f"--policy.n_action_steps 1 "
-        f"--dataset.root {train_root} "
-        f"--dataset.repo_id {repo_id} "
-        f"--policy.max_steps {args.max_steps} "
-        f"--policy.report_to none "
-        f"--policy.output_dir {output_dir}"
-    )
+    report_to = str(getattr(args, "policy_report_to", "none")).strip()
+    report_targets = [token.strip().lower() for token in report_to.replace(";", ",").split(",") if token.strip()]
+    wandb_mode = os.environ.get("SMOLVLA_WANDB_MODE", "offline").strip().lower() or "offline"
+    wandb_arg = f" --wandb.enable true --wandb.mode {shlex.quote(wandb_mode)}"
+    if report_targets:
+        report_targets = [token for token in report_targets if token != "none"]
+        if report_targets and "wandb" not in report_targets:
+            wandb_arg = ""
+        if report_targets and "tensorboard" in report_targets and "wandb" not in report_targets:
+            print("WARN: tensorboard telemetry requested but only wandb is supported in current leRobot version.")
+    flags = _train_flags_from_help(args.lerobot_train_bin)
+    cmd_parts: list[str] = [
+        f"PYTHONPATH={shlex.quote(_compat_pythonpath(extra_py_path))}",
+        shlex.quote(args.lerobot_train_bin),
+        "--policy.type",
+        "smolvla",
+        "--policy.pretrained_path",
+        shlex.quote(str(ckpt)),
+        "--policy.load_vlm_weights",
+        "true",
+        "--policy.vlm_model_name",
+        shlex.quote("HuggingFaceTB/SmolVLM2-500M-Instruct"),
+        "--policy.expert_width_multiplier",
+        "0.5",
+        "--policy.self_attn_every_n_layers",
+        "0",
+        "--policy.n_action_steps",
+        "1",
+        "--dataset.root",
+        shlex.quote(str(train_root)),
+        "--dataset.repo_id",
+        shlex.quote(repo_id),
+        "--steps",
+        str(args.max_steps),
+        "--policy.push_to_hub",
+        "false",
+        "--output_dir",
+        shlex.quote(str(output_dir)),
+    ]
+    if wandb_arg:
+        cmd_parts.extend(shlex.split(wandb_arg))
+    _append_flag_if_supported(cmd_parts, flags, "logging_steps", int(args.log_steps))
+    _append_flag_if_supported(cmd_parts, flags, "save_steps", int(args.save_steps))
+    return " ".join(cmd_parts)
+
+
+def _prepare_train_output_dir(run_root: Path, *, leaf: str = "train_run") -> Path:
+    """Avoid pre-created stage folders; lerobot-train requires a fresh output dir."""
+    if not run_root.exists():
+        return run_root
+    candidate = run_root / leaf
+    if candidate.exists():
+        candidate = run_root / f"{leaf}_{int(time.time())}"
+    return candidate
+
+
+def _has_episode_parquets(root: Path) -> bool:
+    return any(root.rglob("episode_*.parquet"))
+
+
+def _resolve_legacy_split_root(root: Path) -> Path:
+    """Prefer v2.1 roots for merge helper (supports auto-converted *_old splits)."""
+    if _has_episode_parquets(root):
+        return root
+    alt = root.with_name(f"{root.name}_old")
+    if alt.exists() and _has_episode_parquets(alt):
+        return alt
+    return root
+
+
+def _convert_v21_root_to_v30(root: Path) -> None:
+    import lerobot
+
+    script = Path(lerobot.__file__).resolve().parent / "scripts" / "convert_dataset_v21_to_v30.py"
+    cmd = [
+        sys.executable,
+        str(script),
+        "--repo-id=local/stageB_mixed_dataset",
+        "--root",
+        str(root),
+        "--push-to-hub=false",
+    ]
+    subprocess.check_call(cmd)
+
+
+def _strict_vgg_train() -> bool:
+    return os.environ.get("SMOLVLA_STRICT_VGG_TRAIN", "").strip() == "1"
 
 
 def _run_vgg_aux(
     gate_json: Path | None,
     output_dir: Path,
     args,
+    *,
+    train_lane: str = "stageC",
 ) -> int:
-    vgg_aux_dir = output_dir / "vgg_aux"
+    vgg_aux_dir = output_dir / ("vgg_aux_imagined" if train_lane == "stageD" else "vgg_aux")
     vgg_aux_dir.mkdir(parents=True, exist_ok=True)
+    train_output_dir = _prepare_train_output_dir(vgg_aux_dir)
     gate = {"gate_ok": False}
     disabled_reason: str | None = None
+    strict = _strict_vgg_train()
 
     if gate_json and gate_json.exists():
         try:
@@ -387,6 +647,10 @@ def _run_vgg_aux(
             disabled_reason = "gate_ok false"
         if gate.get("contract_ok") is False:
             disabled_reason = "contract_check_failed"
+        gic = str(gate.get("init_checkpoint", "")).strip()
+        ckpt = str(args.checkpoint).strip()
+        if gic and ckpt and gic != ckpt:
+            disabled_reason = "gate_init_checkpoint_mismatch"
 
     if disabled_reason is None:
         disabled, disabled_reason_parsed, _ = _gate_is_disabled(gate_json)
@@ -400,7 +664,7 @@ def _run_vgg_aux(
             "gate": gate,
         }
         _write_json(vgg_aux_dir / "disabled_reason.json", payload)
-        return 0
+        return 1 if strict else 0
 
     action_dim = int(gate.get("velocity_shape", [0, 0, 0])[-1]) if gate.get("velocity_shape") else args.value_head_dim
     if action_dim <= 0:
@@ -421,10 +685,11 @@ def _run_vgg_aux(
             "gate": gate,
         }
         _write_json(vgg_aux_dir / "disabled_reason.json", payload)
-        return 0
+        return 1 if strict else 0
 
     match_plan = {
         "enabled": True,
+        "train_lane": train_lane,
         "match_weight": float(args.match_weight),
         "match_warmup": int(args.match_warmup),
         "value_head_dim": int(args.value_head_dim),
@@ -449,6 +714,7 @@ def _run_vgg_aux(
         "trace_cap": args.trace_cap,
         "gate_json": str(gate_json) if gate_json else "",
         "output_dir": str(vgg_aux_dir),
+        "train_output_dir": str(train_output_dir),
     }
     _write_json(vgg_aux_dir / "vgg_aux_config.json", config_payload)
 
@@ -458,31 +724,33 @@ def _run_vgg_aux(
 
     if args.dry_run:
         env_prefix = f"SMOLVLA_VGG_AUX_PLAN={shlex.quote(str(plan_path))}"
-        cmd = f"{env_prefix} {_build_base_policy_cmd(Path(os.path.expanduser(args.real_data_root)), vgg_aux_dir, args)}"
+        cmd = (
+            f"{env_prefix} "
+            f"{_build_base_policy_cmd(Path(os.path.expanduser(args.real_data_root)), train_output_dir, args, extra_py_path=vgg_aux_dir)}"
+        )
         print(cmd)
         print(f"[train-orch] VGG auxiliary config written: {vgg_aux_dir}")
         return 0
 
     existing_py_path = os.environ.get("PYTHONPATH", "")
-    combined_path = str(vgg_aux_dir)
-    if existing_py_path:
-        combined_path = f"{combined_path}:{existing_py_path}"
-    env_prefix = (
-        f"PYTHONPATH={shlex.quote(combined_path)} "
-        f"SMOLVLA_VGG_AUX_PLAN={shlex.quote(str(plan_path))} "
-    )
+    env_prefix = f"SMOLVLA_VGG_AUX_PLAN={shlex.quote(str(plan_path))} "
     cmd = (
         f"{env_prefix}"
-        f"{_build_base_policy_cmd(Path(os.path.expanduser(args.real_data_root)), vgg_aux_dir, args)}"
+        f"{_build_base_policy_cmd(Path(os.path.expanduser(args.real_data_root)), train_output_dir, args, extra_py_path=vgg_aux_dir)}"
     )
-    _run(cmd)
+    _run(cmd, vgg_aux_dir / "metrics.jsonl", args.log_steps)
     _write_json(vgg_aux_dir / "completed.json", {"enabled": True, "status": "completed"})
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["stageA", "stageB", "stageC"], required=True)
+    parser.add_argument(
+        "--mode",
+        choices=["stageA", "stageB", "stageC", "stageD"],
+        required=True,
+        help="stageD is the same VGG auxiliary path as stageC (imagined-heavy dataset via --real-data-root).",
+    )
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--lerobot-env", required=True)
     parser.add_argument("--real-data-root", required=True)
@@ -497,6 +765,22 @@ def main() -> int:
     parser.add_argument("--value-head-seed", type=int, default=0)
     parser.add_argument("--value-head-min-grad", type=float, default=1.0e-8)
     parser.add_argument("--trace-cap", type=int, default=3)
+    parser.add_argument(
+        "--policy-report-to",
+        default=os.environ.get("SMOLVLA_TRAIN_REPORT_TO", "none"),
+        help="Comma-separated telemetry targets (e.g. wandb,tensorboard). "
+        "In this env, only wandb is currently wired via --wandb.enable.",
+    )
+    parser.add_argument(
+        "--log-steps",
+        type=int,
+        default=int(os.environ.get("SMOLVLA_TRAIN_LOG_STEPS", "100")),
+    )
+    parser.add_argument(
+        "--save-steps",
+        type=int,
+        default=int(os.environ.get("SMOLVLA_TRAIN_SAVE_STEPS", "1000")),
+    )
     parser.add_argument("--lerobot-train-bin", default="")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -512,34 +796,69 @@ def main() -> int:
     output_root.mkdir(parents=True, exist_ok=True)
     gate_json = Path(args.gate_json) if args.gate_json else None
 
-    if args.mode in {"stageB", "stageC"} and not real_data_root.exists():
+    if args.mode in {"stageB", "stageC", "stageD"} and not real_data_root.exists():
         print(f"[train-orch] stage data root missing: {real_data_root}")
-        return 0
+        return 1
 
     if args.mode == "stageA":
         if not real_data_root.exists():
             print(f"[train-orch] stageA missing real data root: {real_data_root}")
-            return 0
-        cmd = _build_base_policy_cmd(real_data_root, output_root, args)
+            return 1
+        cmd = _build_base_policy_cmd(real_data_root, _prepare_train_output_dir(output_root), args)
         if args.dry_run:
             print(cmd)
             return 0
-        _run(cmd)
+        _run(cmd, output_root / "metrics.jsonl", args.log_steps)
         return 0
 
     if args.mode == "stageB":
         if not jepa_data_root or not jepa_data_root.exists():
             print(f"[train-orch] stageB synthetic data root unavailable: {jepa_data_root}")
-            return 0
-        cmd = _build_base_policy_cmd(jepa_data_root, output_root / "jepa_mix", args)
+            return 1
+        mixed_root = output_root / "mixed_lerobot_b"
+        merge_py = Path(__file__).resolve().parent / "merge_lerobot_v21_datasets.py"
+        merge_real_root = _resolve_legacy_split_root(real_data_root)
+        merge_jepa_root = _resolve_legacy_split_root(jepa_data_root)
+        if not args.dry_run:
+            try:
+                subprocess.check_call(
+                    [
+                        sys.executable,
+                        str(merge_py),
+                        "--real-root",
+                        str(merge_real_root),
+                        "--jepa-root",
+                        str(merge_jepa_root),
+                        "--out",
+                        str(mixed_root),
+                    ]
+                )
+            except subprocess.CalledProcessError:
+                print(
+                    "[train-orch] merge_lerobot_v21_datasets failed "
+                    "(need pyarrow; at least one root must contain episode_*.parquet — see merge_lerobot stderr)"
+                )
+                return 1
+            try:
+                _convert_v21_root_to_v30(mixed_root)
+            except subprocess.CalledProcessError:
+                print(
+                    "[train-orch] stageB v2.1->v3.0 conversion failed for mixed dataset "
+                    f"at {mixed_root}"
+                )
+                return 1
+        cmd = _build_base_policy_cmd(mixed_root, _prepare_train_output_dir(output_root / "jepa_mix"), args)
         if args.dry_run:
+            print(f"# merged dataset would be at {mixed_root}")
+            print(f"# merge real root: {merge_real_root}")
+            print(f"# merge jepa root: {merge_jepa_root}")
             print(cmd)
             return 0
-        _run(cmd)
+        _run(cmd, output_root / "jepa_mix" / "metrics.jsonl", args.log_steps)
         return 0
 
-    if args.mode == "stageC":
-        return _run_vgg_aux(gate_json, output_root, args)
+    if args.mode in {"stageC", "stageD"}:
+        return _run_vgg_aux(gate_json, output_root, args, train_lane=args.mode)
 
     raise RuntimeError(f"unknown mode {args.mode}")
 

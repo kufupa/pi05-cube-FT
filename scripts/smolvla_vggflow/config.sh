@@ -47,7 +47,7 @@ SMOLVLA_UV_CACHE="${SMOLVLA_UV_CACHE:-${SMOLVLA_CACHE_ROOT}/uv}"
 
 SMOLVLA_REPORT_ROOT="${SMOLVLA_REPORT_ROOT:-${SMOLVLA_REPO_ROOT}/reports}"
 SMOLVLA_ARTIFACT_ROOT="${SMOLVLA_ARTIFACT_ROOT:-${SMOLVLA_REPO_ROOT}/artifacts}"
-SMOLVLA_DATA_ROOT="${SMOLVLA_DATA_ROOT:-${SMOLVLA_REPO_ROOT}/datasets/bridged}"
+SMOLVLA_DATA_ROOT="${SMOLVLA_DATA_ROOT:-${SMOLVLA_REPO_ROOT}/datasets/bridged_v30}"
 # Optional TrainD: VGG aux on imagined-heavy root (default bridged val). Use SMOLVLA_TRAIN_VARIANT=d and/or SMOLVLA_ENABLE_TRAIN_D=1.
 SMOLVLA_ENABLE_TRAIN_D="${SMOLVLA_ENABLE_TRAIN_D:-0}"
 SMOLVLA_STAGE_D_DATA_ROOT="${SMOLVLA_STAGE_D_DATA_ROOT:-${SMOLVLA_DATA_ROOT}/val}"
@@ -61,10 +61,25 @@ SMOLVLA_JEPA_CKPT="${SMOLVLA_JEPA_CKPT:-jepa_wm_metaworld.pth.tar}"
 SMOLVLA_JEPA_TASK="${SMOLVLA_JEPA_TASK:-push-v3}"
 SMOLVLA_JEPA_SMOKE_STEPS="${SMOLVLA_JEPA_SMOKE_STEPS:-8}"
 SMOLVLA_JEPA_SMOKE_FORCE_VALIDATE="${SMOLVLA_JEPA_SMOKE_FORCE_VALIDATE:-0}"
+# When 1 and SMOLVLA_JEPA_EXPORT_ENABLED=1, phase07 skips jepa_smoke_check.py so torch.hub loads JEPA-WM only once (inside the exporter).
+SMOLVLA_JEPA_SKIP_SMOKE_WHEN_EXPORT="${SMOLVLA_JEPA_SKIP_SMOKE_WHEN_EXPORT:-1}"
 SMOLVLA_JEPA_REMOTE_REPO="${SMOLVLA_JEPA_REMOTE_REPO:-facebook/jepa-wms}"
 SMOLVLA_JEPA_SOURCE="${SMOLVLA_JEPA_SOURCE:-${SMOLVLA_CACHE_ROOT}/jepa_workflow}"
 # When 1, phase07 runs MetaWorld rollouts and writes trajectories under SMOLVLA_JEPA_EXPORT_OUT (bridge input).
 SMOLVLA_JEPA_EXPORT_ENABLED="${SMOLVLA_JEPA_EXPORT_ENABLED:-0}"
+# When 1, skip loading SmolVLA for export (empty --policy-checkpoint): avoids VLM/safetensors segfaults on some cluster stacks; rollouts use CEM/heuristic per exporter.
+SMOLVLA_JEPA_EXPORT_USE_HEURISTIC_EXEC="${SMOLVLA_JEPA_EXPORT_USE_HEURISTIC_EXEC:-0}"
+# When 1, jepa_cem_paired_pushv3_export uses --device cpu for WM encode/unroll (avoids CUDA+pygame/Mesa segfaults on some Slurm GPU nodes; slower).
+SMOLVLA_JEPA_EXPORT_WM_ON_CPU="${SMOLVLA_JEPA_EXPORT_WM_ON_CPU:-0}"
+# When 1, exporter skips torch.hub WM load (heuristic-only rollouts; still writes trajectories.pt for bridge if MetaWorld runs). Use when hub load segfaults after checkpoint init on cluster nodes.
+SMOLVLA_JEPA_EXPORT_SKIP_WM="${SMOLVLA_JEPA_EXPORT_SKIP_WM:-0}"
+# When 0/false/no, SmolVLA export skips loading VLM backbone weights (smaller download; may reduce segfault risk on some stacks).
+SMOLVLA_JEPA_EXPORT_POLICY_LOAD_VLM_WEIGHTS="${SMOLVLA_JEPA_EXPORT_POLICY_LOAD_VLM_WEIGHTS:-1}"
+# SmolVLA policy load device for exporter: default|auto|cpu|cuda (default follows exporter --device / WM path).
+SMOLVLA_JEPA_EXPORT_POLICY_DEVICE="${SMOLVLA_JEPA_EXPORT_POLICY_DEVICE:-default}"
+# Headless MuJoCo render backend used by phase07 exporter.
+SMOLVLA_JEPA_MUJOCO_GL="${SMOLVLA_JEPA_MUJOCO_GL:-egl}"
+SMOLVLA_JEPA_PYOPENGL_PLATFORM="${SMOLVLA_JEPA_PYOPENGL_PLATFORM:-egl}"
 SMOLVLA_JEPA_EXPORT_OUT="${SMOLVLA_JEPA_EXPORT_OUT:-${SMOLVLA_JEPA_SOURCE}}"
 SMOLVLA_JEPA_EXPORT_EPISODES="${SMOLVLA_JEPA_EXPORT_EPISODES:-16}"
 SMOLVLA_JEPA_EXPORT_MAX_STEPS="${SMOLVLA_JEPA_EXPORT_MAX_STEPS:-200}"
@@ -77,6 +92,8 @@ SMOLVLA_BRIDGE_MIN_CONFIDENCE="${SMOLVLA_BRIDGE_MIN_CONFIDENCE:-0.0}"
 SMOLVLA_BRIDGE_VAL_RATIO="${SMOLVLA_BRIDGE_VAL_RATIO:-0.15}"
 SMOLVLA_BRIDGE_MIN_ACTION_LEN="${SMOLVLA_BRIDGE_MIN_ACTION_LEN:-1}"
 SMOLVLA_BRIDGE_TRAIN_RATIO="${SMOLVLA_BRIDGE_TRAIN_RATIO:-0.85}"
+# Keep conversion enabled by default; stage10 training expects LeRobot v3.0 datasets.
+SMOLVLA_BRIDGE_NO_CONVERT_V30="${SMOLVLA_BRIDGE_NO_CONVERT_V30:-0}"
 
 SMOLVLA_PARTITION_LIST="${SMOLVLA_PARTITION_LIST:-a100,a40,a30,t4,a16}"
 SMOLVLA_DEFAULT_PARTITION="${SMOLVLA_DEFAULT_PARTITION:-a100}"

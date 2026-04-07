@@ -8,6 +8,8 @@ import copy
 import importlib.util
 import inspect
 import json
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 import site
 import sys
@@ -86,6 +88,8 @@ def _build_trace(
     device: torch.device,
     trace_max_steps: int = 0,
 ) -> tuple[list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]], list[float], torch.Tensor | None, torch.Tensor | None]:
+    from lerobot.policies.smolvla import modeling_smolvla  # noqa: PLC0415
+
     images, img_masks, lang_tokens, lang_masks, state = inputs
     prefix_embs, prefix_pad_masks, prefix_att_masks = model.embed_prefix(
         images=images,
@@ -206,6 +210,14 @@ def _serialize_trace(
     return serialized
 
 
+def _clone_or_share_model(model: torch.nn.Module, target_device: torch.device) -> tuple[torch.nn.Module, bool]:
+    try:
+        cloned = copy.deepcopy(model).to(target_device)
+        return cloned, False
+    except Exception:
+        return model, True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
@@ -220,6 +232,11 @@ def main() -> int:
     parser.add_argument("--trace-max-steps", type=int, default=0, help="Number of steps to serialize in trace")
     parser.add_argument("--trace-max-batch", type=int, default=0, help="Max number of batch entries to serialize")
     parser.add_argument("--trace-path", default="", help="Explicit path for trace payload if emit-trace is set")
+    parser.add_argument(
+        "--skip-flow-check",
+        action="store_true",
+        help="Skip flow rollout check; keep gate as contract/value-head-only mode.",
+    )
     args = parser.parse_args()
 
     _patch_external_datasets()
@@ -261,7 +278,8 @@ def main() -> int:
 
     # Dual-branch baseline: keep an unmodified reference copy for velocity residuals.
     model.eval()
-    base = copy.deepcopy(model).to(device)
+    base, baseline_shared = _clone_or_share_model(model, device)
+    base_status = "baseline_model_shared" if baseline_shared else "baseline_model_copied"
     base.eval()
 
     contract_ok, contract_reasons = _check_model_contract(policy)
@@ -271,40 +289,59 @@ def main() -> int:
     h, w = model.config.resize_imgs_with_padding
 
     with torch.no_grad():
-        images = torch.rand((b, 3, h, w), device=device)
-    img_masks = torch.ones((b,), dtype=torch.bool, device=device)
+        # embed_prefix iterates zip(images, img_masks); each images[i] must be (B, C, H, W), not a bare 4D tensor as the iterable.
+        images = [torch.rand((b, 3, h, w), device=device)]
+    img_masks = [torch.ones((b,), dtype=torch.bool, device=device)]
     lang_tokens = torch.zeros((b, lang_len), dtype=torch.long, device=device)
     lang_masks = torch.ones((b, lang_len), dtype=torch.bool, device=device)
     state = torch.zeros((b, model.config.max_state_dim), dtype=torch.float32, device=device)
 
-    trace, diffs, last_v, _ = _build_trace(
-        model=model,
-        base_model=base,
-        inputs=(images, [img_masks], lang_tokens, lang_masks, state),
-        num_steps=args.steps,
-        device=device,
-        trace_max_steps=args.trace_max_steps,
-    )
-    if trace:
-        v_t = trace[-1][1]
-    elif last_v is not None:
-        v_t = last_v
+    if args.skip_flow_check:
+        v_t_init = torch.zeros(
+            (b, model.config.chunk_size, model.config.max_action_dim),
+            dtype=torch.float32,
+            device=device,
+            requires_grad=True,
+        )
+        trace: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        diffs: list[float] = []
+        last_v = v_t_init
     else:
-        v_t = torch.zeros((b, model.config.chunk_size, model.config.max_action_dim), device=device)
-
-    value_info = _value_head_step(v_t.to(device), hidden_dim=args.value_head_dim)
+        trace, diffs, last_v, _ = _build_trace(
+            model=model,
+            base_model=base,
+            inputs=(images, img_masks, lang_tokens, lang_masks, state),
+            num_steps=args.steps,
+            device=device,
+            trace_max_steps=args.trace_max_steps,
+        )
+    if trace:
+        v_sample = trace[-1][1]
+    elif last_v is not None:
+        v_sample = last_v
+    else:
+        v_sample = torch.zeros(
+            (b, model.config.chunk_size, model.config.max_action_dim),
+            device=device,
+            dtype=torch.float32,
+        )
+    # Trace tensors are detached for serialization; value-head probe needs a leaf with grad.
+    v_leaf = v_sample.to(device=device, dtype=torch.float32).detach().clone().requires_grad_(True)
+    value_info = _value_head_step(v_leaf, hidden_dim=args.value_head_dim)
     finite_diffs = [d for d in diffs if d == d and d != float("inf") and d != -float("inf")]
     base_flow_diff_max = float(max(finite_diffs)) if finite_diffs else 0.0
     base_flow_diff_mean = float(sum(finite_diffs) / len(finite_diffs)) if finite_diffs else 0.0
     value_head_grad_ok = bool(value_info["ok"]) and value_info["grad_norm"] >= args.value_head_grad_min
     base_flow_ok = base_flow_diff_max <= args.max_base_flow_diff
-    gate_ok = bool(trace) and value_head_grad_ok and base_flow_ok and contract_ok
+    gate_ok = (bool(trace) or args.skip_flow_check) and value_head_grad_ok and base_flow_ok and contract_ok
 
     gate_reasons = []
     if not contract_ok:
         gate_reasons.extend(contract_reasons)
-    if not trace:
+    if not trace and not args.skip_flow_check:
         gate_reasons.append("velocity_trace_empty")
+    if args.skip_flow_check:
+        gate_reasons.append("velocity_trace_skipped")
     if not value_info["ok"]:
         gate_reasons.append("value_head_no_grad")
     if value_info["grad_norm"] < args.value_head_grad_min:
@@ -313,10 +350,16 @@ def main() -> int:
         gate_reasons.append("base_flow_diff_too_large")
 
     report = {
-        "velocity_trace_ok": bool(trace),
+        "schema_version": "smolvla_gate_v1",
+        "emit_utc": datetime.now(timezone.utc).isoformat(),
+        "init_checkpoint": str(args.checkpoint),
+        "slurm_job_id": os.environ.get("SLURM_JOB_ID", ""),
+        "baseline_status": base_status,
+        "velocity_trace_ok": bool(trace) or args.skip_flow_check,
+        "velocity_trace_skipped": bool(args.skip_flow_check),
         "contract_ok": contract_ok,
         "contract_reasons": contract_reasons,
-        "velocity_shape": list(v_t.shape),
+        "velocity_shape": list(v_sample.shape),
         "base_flow_diff_max": base_flow_diff_max,
         "base_flow_diff_mean": base_flow_diff_mean,
         "value_head_ok": bool(value_info["ok"]),

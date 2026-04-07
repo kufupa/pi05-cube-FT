@@ -677,10 +677,14 @@ if [[ ! -x "${SMOLVLA_LEROBOT_ENV_DIR}/bin/python" ]]; then
 fi
 
 source "${SMOLVLA_LEROBOT_ENV_DIR}/bin/activate"
-if command -v uv >/dev/null 2>&1; then
+LRP="${SMOLVLA_LEROBOT_ENV_DIR}/bin/python"
+# Many venvs ship pip but omit ensurepip; try pip/uv before ensurepip bootstrap.
+if "${LRP}" -m pip --version >/dev/null 2>&1; then
+  log_capture "Meta-World install (pip)" bash -lc "source '${SMOLVLA_LEROBOT_ENV_DIR}/bin/activate' && '${LRP}' -m pip install \"metaworld>=0.1.0\""
+elif command -v uv >/dev/null 2>&1; then
   log_capture "Meta-World install (uv)" bash -lc "source '${SMOLVLA_LEROBOT_ENV_DIR}/bin/activate' && uv pip install \"metaworld>=0.1.0\""
 else
-  log_capture "Meta-World install (pip)" bash -lc "mkdir -p '${SMOLVLA_CACHE_ROOT}/tmp' && export TMPDIR='${SMOLVLA_CACHE_ROOT}/tmp' && '${SMOLVLA_LEROBOT_ENV_DIR}/bin/python' -m ensurepip --upgrade --default-pip && '${SMOLVLA_LEROBOT_ENV_DIR}/bin/python' -m pip install metaworld>=0.1.0"
+  log_capture "Meta-World install (pip via ensurepip)" bash -lc "mkdir -p '${SMOLVLA_CACHE_ROOT}/tmp' && export TMPDIR='${SMOLVLA_CACHE_ROOT}/tmp' && '${LRP}' -m ensurepip --upgrade --default-pip && '${LRP}' -m pip install \"metaworld>=0.1.0\""
 fi
 log_capture "push-v3 env probe" "${SMOLVLA_LEROBOT_ENV_DIR}/bin/python" - <<'PY'
 import metaworld
@@ -730,6 +734,11 @@ Seed: ${SMOLVLA_BASELINE_SEED}
 Executed: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
   require_slurm_gpu_stage "phase06_baseline_eval"
+  if [[ -x "${SMOLVLA_LEROBOT_ENV_DIR}/bin/python" ]]; then
+    if ! "${SMOLVLA_LEROBOT_ENV_DIR}/bin/python" -m pip install -q num2words >/dev/null 2>&1; then
+      log_warn "pip install num2words failed in lerobot env; SmolVLM baseline may fail"
+    fi
+  fi
 
 cmd="${SMOLVLA_BASELINE_CMD:-}"
 if [[ -z "${cmd}" ]]; then
@@ -763,7 +772,8 @@ fi
     append_decision "phase06 baseline eval" "baseline artifact path captured: ${baseline_output_dir}" "PASS"
     eval_info_path="${baseline_output_dir}/eval_info.json"
     if [[ -f "${eval_info_path}" ]]; then
-      if eval_summary="$(SMOLVLA_EVAL_INFO_PATH="${eval_info_path}" "${SMOLVLA_LEROBOT_ENV_DIR}/bin/python" - <<'PY'
+      export SMOLVLA_EVAL_INFO_PATH="${eval_info_path}"
+      if eval_summary="$("${SMOLVLA_LEROBOT_ENV_DIR}/bin/python" - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -783,7 +793,7 @@ print(
     + str(overall.get("eval_ep_s", ""))
 )
 PY
-      )"; then
+)"; then
         IFS='|' read -r baseline_episodes baseline_success baseline_avg_sum baseline_avg_max baseline_eval_ep_s <<< "${eval_summary}"
         echo "Baseline eval summary (n=${baseline_episodes}, success=${baseline_success}, avg_sum_reward=${baseline_avg_sum}, avg_max_reward=${baseline_avg_max}, avg_eval_s_per_ep=${baseline_eval_ep_s})" >>"${REPORT_FILE}"
         if [[ -z "${baseline_episodes}" ]]; then
@@ -882,12 +892,54 @@ PY
     return 0
   fi
 
-  if [[ -x "${smoke_py}" ]] && [[ -f "${SMOLVLA_PIPE_ROOT}/jepa_smoke_check.py" ]]; then
-    JEPA_LOG_BASE="${SMOLVLA_CACHE_ROOT}/jepa_workflow"
-    if [[ ! -d "${JEPA_LOG_BASE}" ]]; then
-      JEPA_LOG_BASE="/tmp"
+  JEPA_LOG_BASE="${SMOLVLA_CACHE_ROOT}/jepa_workflow"
+  if [[ ! -d "${JEPA_LOG_BASE}" ]]; then
+    JEPA_LOG_BASE="/tmp"
+  fi
+
+  local jepa_hub_deps_needed=0
+  if [[ -x "${smoke_py}" ]]; then
+    if [[ "${SMOLVLA_JEPA_EXPORT_ENABLED:-0}" == "1" ]]; then
+      jepa_hub_deps_needed=1
     fi
-    log_capture "JEPA smoke unroll" bash -c "
+    if [[ -f "${SMOLVLA_PIPE_ROOT}/jepa_smoke_check.py" ]]; then
+      if [[ "${SMOLVLA_JEPA_EXPORT_ENABLED:-0}" != "1" || "${SMOLVLA_JEPA_SKIP_SMOKE_WHEN_EXPORT:-1}" != "1" ]]; then
+        jepa_hub_deps_needed=1
+      fi
+    fi
+  fi
+
+  if (( jepa_hub_deps_needed == 1 )); then
+    # torch.hub local hubconf may require deps not seeded in the leRobot venv (hubconf imports omegaconf, gym, …).
+    # Hubconf imports evals.simu_env_planning.* which matches JEPA-WM pyproject sim stack (not all optional envs).
+    if ! "${smoke_py}" -m pip install -q \
+      "hydra-core" "omegaconf>=2.1" \
+      "gym==0.23.1" "gymnasium>=1.2.0" \
+      "pygame>=2.6.0" "pymunk==6.8.0" "shapely" "scikit-image" \
+      "opencv-python-headless" "matplotlib" \
+      "tensordict>=0.9.1" "torchrl>=0.9.2" "timm>=1.0.19" \
+      "nevergrad" "submitit" "tqdm" "ruamel.yaml" "clusterscope" \
+      "lpips>=0.1.4" \
+      "seaborn" "plotly" "termcolor" "pandas" "h5py" "einops" \
+      "imageio" "imageio-ffmpeg" "moviepy" "mediapy" "decord>=0.6.0" "hydra-submitit-launcher" \
+      >/dev/null 2>&1; then
+      log_warn "pip install hub smoke deps failed for ${smoke_py}; JEPA hub smoke/export may still fail"
+    fi
+  fi
+
+  if [[ -x "${smoke_py}" ]] && [[ -f "${SMOLVLA_PIPE_ROOT}/jepa_smoke_check.py" ]]; then
+    if [[ "${SMOLVLA_JEPA_EXPORT_ENABLED:-0}" == "1" && "${SMOLVLA_JEPA_SKIP_SMOKE_WHEN_EXPORT:-1}" == "1" ]]; then
+      log_info "Skipping JEPA smoke unroll (export enabled + SMOLVLA_JEPA_SKIP_SMOKE_WHEN_EXPORT=1): avoids a second torch.hub WM load; export loads WM once."
+      append_passfail "PASS" "JEPA smoke unroll skipped (single hub load via trajectory export)"
+      {
+        echo ""
+        echo "## JEPA smoke status"
+        echo "- status: SKIPPED_SINGLE_HUB_LOAD_VIA_EXPORT"
+        echo "- message: phase07 export loads JEPA-WM once; smoke check omitted when SMOLVLA_JEPA_SKIP_SMOKE_WHEN_EXPORT=1."
+        echo "- checked_at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+      } >>"${REPORT_FILE}"
+    else
+      log_capture "JEPA smoke unroll" bash -c "
       env \
         JEPAWM_LOGS='${JEPA_LOG_BASE}' \
         JEPAWM_CKPT='${JEPA_LOG_BASE}' \
@@ -899,6 +951,7 @@ PY
           --smoke-steps '${SMOLVLA_JEPA_SMOKE_STEPS}' \
           --device '${SMOLVLA_BASELINE_DEVICE}'
     "
+    fi
   else
     log_capture "JEPA model smoke (fallback)" bash -c "
 ${smoke_py} <<'PY'
@@ -929,6 +982,16 @@ PY
       return 1
     else
       mkdir -p "${SMOLVLA_JEPA_EXPORT_OUT}"
+      local export_policy_ckpt="${SMOLVLA_INIT_CHECKPOINT}"
+      if [[ "${SMOLVLA_JEPA_EXPORT_USE_HEURISTIC_EXEC:-0}" == "1" ]]; then
+        export_policy_ckpt=""
+        log_warn "JEPA export: SMOLVLA_JEPA_EXPORT_USE_HEURISTIC_EXEC=1 (skip SmolVLA/VLM load; CEM/heuristic execution)"
+      fi
+      local export_wm_device="${SMOLVLA_BASELINE_DEVICE}"
+      if [[ "${SMOLVLA_JEPA_EXPORT_WM_ON_CPU:-0}" == "1" ]]; then
+        export_wm_device="cpu"
+        log_warn "JEPA export: SMOLVLA_JEPA_EXPORT_WM_ON_CPU=1 (WM encode/unroll on CPU)"
+      fi
       site_packages="$("${SMOLVLA_LEROBOT_ENV_DIR}/bin/python" - <<'PY'
 import site
 print(":".join(site.getsitepackages()))
@@ -938,6 +1001,12 @@ PY
         set -euo pipefail
         export LEAKY=1 MH_REPO=metaworld-v2 METAWORLD_RENDER_MODE=rgb_array
         xvfb-run -a -s '-screen 0 1280x1024x24' env \
+          MUJOCO_GL='${SMOLVLA_JEPA_MUJOCO_GL}' \
+          PYOPENGL_PLATFORM='${SMOLVLA_JEPA_PYOPENGL_PLATFORM}' \
+          JEPAWM_LOGS='${JEPA_LOG_BASE}' \
+          JEPAWM_CKPT='${JEPA_LOG_BASE}' \
+          SMOLVLA_JEPA_EXPORT_POLICY_LOAD_VLM_WEIGHTS='${SMOLVLA_JEPA_EXPORT_POLICY_LOAD_VLM_WEIGHTS}' \
+          SMOLVLA_JEPA_EXPORT_POLICY_DEVICE='${SMOLVLA_JEPA_EXPORT_POLICY_DEVICE}' \
           PYTHONPATH='${site_packages}:'\"\${PYTHONPATH:-}\" \
           '${SMOLVLA_LEROBOT_ENV_DIR}/bin/python' '${SMOLVLA_PIPE_ROOT}/jepa_cem_paired_pushv3_export.py' \
             --task '${SMOLVLA_JEPA_TASK}' \
@@ -950,7 +1019,8 @@ PY
             --cem-horizon '${SMOLVLA_JEPA_CEM_HORIZON}' \
             --cem-pop '${SMOLVLA_JEPA_CEM_POP}' \
             --cem-iters '${SMOLVLA_JEPA_CEM_ITERS}' \
-            --device '${SMOLVLA_BASELINE_DEVICE}'
+            --device '${export_wm_device}' \
+            --policy-checkpoint '${export_policy_ckpt}'
       "; then
         append_passfail "PASS" "JEPA rollout export written under ${SMOLVLA_JEPA_EXPORT_OUT}"
         append_decision "phase07 JEPA export" "trajectories.pt for bridge_builder" "PASS"
@@ -999,13 +1069,18 @@ if [[ ! -f "${SMOLVLA_PIPE_ROOT}/bridge_builder.py" ]]; then
   return 1
 fi
 source "${SMOLVLA_LEROBOT_ENV_DIR}/bin/activate"
+bridge_no_convert_arg=""
+if [[ "${SMOLVLA_BRIDGE_NO_CONVERT_V30:-1}" == "1" ]]; then
+  bridge_no_convert_arg="--no-convert-v30"
+fi
 if ! log_capture "Bridge conversion" bash -lc "python '${SMOLVLA_PIPE_ROOT}/bridge_builder.py' \
   --jepa-source '${SMOLVLA_JEPA_SOURCE}' \
   --out-dir '${SMOLVLA_DATA_ROOT}' \
   --train-ratio '${SMOLVLA_BRIDGE_TRAIN_RATIO}' \
   --min-confidence '${SMOLVLA_BRIDGE_MIN_CONFIDENCE}' \
   --val-ratio '${SMOLVLA_BRIDGE_VAL_RATIO}' \
-  --min-action-length '${SMOLVLA_BRIDGE_MIN_ACTION_LEN}'"; then
+  --min-action-length '${SMOLVLA_BRIDGE_MIN_ACTION_LEN}' \
+  ${bridge_no_convert_arg}"; then
   append_passfail "FAIL" "bridge_builder.py exited non-zero (see Bridge conversion log above)"
   append_decision "phase08 bridge design" "bridge conversion command failed" "FAIL"
   return 1

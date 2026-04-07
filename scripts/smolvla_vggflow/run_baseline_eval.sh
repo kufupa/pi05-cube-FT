@@ -15,6 +15,7 @@ video="${SMOLVLA_BASELINE_VIDEO}"
 video_length="${SMOLVLA_BASELINE_VIDEO_LENGTH}"
 video_interval="${SMOLVLA_BASELINE_VIDEO_INTERVAL}"
 output_root="${SMOLVLA_ARTIFACT_ROOT}/phase06_baseline"
+checkpoint="${SMOLVLA_INIT_CHECKPOINT}"
 
 while [[ $# -gt 0 ]]; do
   case "${1}" in
@@ -44,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --output-root)
       output_root="${2}"
+      shift 2
+      ;;
+    --checkpoint)
+      checkpoint="${2}"
       shift 2
       ;;
     *)
@@ -115,7 +120,7 @@ def _restore_datasets_module() -> None:
 _restore_datasets_module()
 PY
 
-log_info "Running baseline push-v3 eval: episodes=${episodes}, device=${device}, seed=${seed}, video=${video}"
+log_info "Running baseline push-v3 eval: episodes=${episodes}, device=${device}, seed=${seed}, video=${video}, checkpoint=${checkpoint}"
 xvfb-run -a -s "-screen 0 1280x1024x24" env \
   LEAKY=1 \
   UV_INSECURE_HOST=http://localhost:9999 \
@@ -124,7 +129,7 @@ xvfb-run -a -s "-screen 0 1280x1024x24" env \
   PYTHONPATH="${tmp_dir}:${site_packages}:${PYTHONPATH:-}" \
   bash -lc "source '${SMOLVLA_LEROBOT_ENV_DIR}/bin/activate' && cd /tmp && lerobot-eval \
   --policy.type smolvla \
-  --policy.pretrained_path ${SMOLVLA_INIT_CHECKPOINT} \
+  --policy.pretrained_path ${checkpoint} \
   --policy.load_vlm_weights true \
   --policy.vlm_model_name HuggingFaceTB/SmolVLM2-500M-Instruct \
   --policy.expert_width_multiplier 0.5 \
