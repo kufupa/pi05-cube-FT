@@ -98,6 +98,10 @@ def _strict_out_dir_has_existing_content(out_dir: Path) -> bool:
 
 
 def _read_records(source: Path) -> List[Dict[str, Any]]:
+    if not source.exists():
+        return []
+    if source.is_file():
+        return _read_py_records(source)
     records: List[Dict[str, Any]] = []
     for path in sorted(source.rglob("*")):
         if path.is_dir():
@@ -119,6 +123,61 @@ def _read_records(source: Path) -> List[Dict[str, Any]]:
         except Exception as exc:
             print(f"[bridge] skip {path}: {exc}")
     return records
+
+
+def _read_records_from_manifest(source: Path) -> List[Dict[str, Any]]:
+    """Read trajectory records from export_manifest.json when available."""
+    if not source.is_dir():
+        return _read_records(source)
+
+    manifest_path = source / "export_manifest.json"
+    if not manifest_path.is_file():
+        return _read_records(source)
+
+    try:
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"[bridge] manifest parse failed ({manifest_path}): {exc}")
+        return _read_records(source)
+
+    trajectories_file = manifest_payload.get("trajectories_file")
+    if not isinstance(trajectories_file, str) or not trajectories_file.strip():
+        return _read_records(source)
+
+    raw_target = Path(trajectories_file.strip()).expanduser()
+    target = raw_target if raw_target.is_absolute() else (source / raw_target)
+    if target.exists():
+        return _read_records(target)
+
+    # Allow concise manifest targets like "episodes" to resolve to known payload files.
+    if target.suffix == "":
+        ext_candidates = [".json", ".jsonl", ".npz", ".pth", ".pt", ".pickle", ".pkl"]
+        for ext in ext_candidates:
+            candidate = target.with_suffix(ext)
+            if candidate.is_file():
+                return _read_records(candidate)
+        pth_tar_candidate = target.with_name(f"{target.name}.pth.tar")
+        if pth_tar_candidate.is_file():
+            return _read_records(pth_tar_candidate)
+
+        parent = target.parent
+        if parent.is_dir():
+            shard_files = []
+            for path in sorted(parent.glob(f"{target.name}*")):
+                if path.is_file():
+                    suffix = path.suffix.lower()
+                    stem = path.name.lower()
+                    if suffix in {".json", ".jsonl", ".npz", ".pth", ".pt", ".pickle", ".pkl"} or stem.endswith(
+                        ".pth.tar"
+                    ):
+                        shard_files.append(path)
+            if shard_files:
+                records: List[Dict[str, Any]] = []
+                for shard in shard_files:
+                    records.extend(_read_records(shard))
+                return records
+
+    return _read_records(target)
 
 
 def _looks_like_model_checkpoint(payload: Any) -> bool:
@@ -975,8 +1034,8 @@ def _split(records: List[Dict[str, Any]], val_ratio: float) -> tuple[List[Dict[s
 def _write_placeholder_dataset(out_dir: Path) -> None:
     (out_dir / "train" / "manifest.json").parent.mkdir(parents=True, exist_ok=True)
     (out_dir / "val" / "manifest.json").parent.mkdir(parents=True, exist_ok=True)
-    (out_dir / "train" / "manifest.json").write_text("[]\n", encoding="utf-8")
-    (out_dir / "val" / "manifest.json").write_text("[]\n", encoding="utf-8")
+    _write_split_manifest_preview(out_dir / "train" / "manifest.json", [])
+    _write_split_manifest_preview(out_dir / "val" / "manifest.json", [])
     _write_split_meta_info(out_dir / "train", "train", [], 0)
     _write_split_meta_info(out_dir / "val", "val", [], 0)
     (out_dir / "bridge_summary.json").write_text(
@@ -1028,6 +1087,26 @@ def _coerce_list(value: Any) -> List[Any]:
     if isinstance(value, str):
         return [value]
     return list(value) if hasattr(value, "__iter__") else [value]
+
+
+def _write_split_manifest_preview(path: Path, records: List[Dict[str, Any]]) -> None:
+    sample_pair_keys: List[str] = []
+    sample_step_counts: List[int] = []
+    for item in records[:10]:
+        meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+        pair_key = meta.get("pair_key") or item.get("pair_key") or ""
+        sample_pair_keys.append(str(pair_key))
+        steps = _coerce_list(item.get("action_chunk", item.get("actions", [])))
+        if steps and isinstance(steps[0], (int, float)):
+            steps = [steps]
+        sample_step_counts.append(int(len(steps)))
+    preview = {
+        "record_count": int(len(records)),
+        "sample_pair_keys": sample_pair_keys,
+        "sample_step_counts": sample_step_counts,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(preview, indent=2), encoding="utf-8")
 
 
 def _episode_policy_sources(item: Dict[str, Any]) -> List[str]:
@@ -1214,7 +1293,7 @@ def main() -> int:
         if source.is_file():
             records.extend(_read_py_records(source))
         elif source.is_dir():
-            records.extend(_read_records(source))
+            records.extend(_read_records_from_manifest(source))
 
     if not records:
         print("[bridge] no source files found; writing empty placeholders")
@@ -1297,12 +1376,8 @@ def main() -> int:
 
     (out_dir / "train").mkdir(parents=True, exist_ok=True)
     (out_dir / "val").mkdir(parents=True, exist_ok=True)
-    (out_dir / "train" / "manifest.json").write_text(
-        json.dumps(train, indent=2), encoding="utf-8"
-    )
-    (out_dir / "val" / "manifest.json").write_text(
-        json.dumps(val, indent=2), encoding="utf-8"
-    )
+    _write_split_manifest_preview(out_dir / "train" / "manifest.json", train)
+    _write_split_manifest_preview(out_dir / "val" / "manifest.json", val)
     task_default = "push the puck to the goal"
     try:
         _write_lerobot_v21_smolvla_split(

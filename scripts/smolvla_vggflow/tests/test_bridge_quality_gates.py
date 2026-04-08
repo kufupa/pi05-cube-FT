@@ -2,6 +2,7 @@ import importlib.util
 import json
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -18,11 +19,47 @@ EXPORTER_MODULE = Path(__file__).resolve().parents[1] / "jepa_cem_paired_pushv3_
 EXPORTER_SPEC = importlib.util.spec_from_file_location("jepa_export", EXPORTER_MODULE)
 jepa_export = importlib.util.module_from_spec(EXPORTER_SPEC)
 assert EXPORTER_SPEC and EXPORTER_SPEC.loader
+if "torch" not in sys.modules:
+    torch_stub = types.ModuleType("torch")
+    torch_stub.is_tensor = lambda _: False
+    sys.modules["torch"] = torch_stub
 sys.modules[EXPORTER_SPEC.name] = jepa_export
 EXPORTER_SPEC.loader.exec_module(jepa_export)
 
 
 class BridgeQualityGateTests(unittest.TestCase):
+    def test_bridge_reads_manifest_trajectories_file_for_shards(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            episodes_dir = root / "episodes"
+            episodes_dir.mkdir(parents=True, exist_ok=True)
+            payload = [
+                {
+                    "images": [[[0, 0, 0]]],
+                    "state": [[0.0, 0.0, 0.0, 0.0]],
+                    "actions": [[0.0, 0.0, 0.0, 0.0]],
+                    "language": "push",
+                    "done": True,
+                    "success": True,
+                }
+            ]
+            (episodes_dir / "shard_0001.json").write_text(
+                json.dumps(payload), encoding="utf-8"
+            )
+            (root / "export_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "export_mode": "cem_paired_push_v3",
+                        "trajectories_file": "episodes",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            records = bridge_builder._read_records_from_manifest(root)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].get("language"), "push")
+
     def test_blank_images_are_rejected(self):
         metrics = {
             "image_nonblank_ratio": 0.0,
