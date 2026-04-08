@@ -71,6 +71,32 @@ def _resolve_wm_heavy_split_enabled_default() -> int:
     return _env_flag_int(raw, 1)
 
 
+def _strict_out_dir_has_existing_content(out_dir: Path) -> bool:
+    """Treat empty pre-created train/val roots as reusable; everything else blocks strict mode."""
+    if not out_dir.exists():
+        return False
+    if not out_dir.is_dir():
+        return True
+
+    allowed_empty_root_entries = {"train", "val"}
+    try:
+        root_entries = list(out_dir.iterdir())
+    except Exception:
+        return True
+
+    for entry in root_entries:
+        if entry.name not in allowed_empty_root_entries:
+            return True
+        if not entry.is_dir():
+            return True
+        try:
+            if any(entry.iterdir()):
+                return True
+        except Exception:
+            return True
+    return False
+
+
 def _read_records(source: Path) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
     for path in sorted(source.rglob("*")):
@@ -1136,6 +1162,12 @@ def main() -> int:
     )
     parser.add_argument("--jepa-source", default="", help="JEPA trajectory export path")
     parser.add_argument("--out-dir", required=True, help="Output dataset root")
+    parser.add_argument(
+        "--fail-on-path-reuse",
+        type=int,
+        default=_env_flag_int(os.environ.get("SMOLVLA_FAIL_ON_PATH_REUSE", "0"), 0),
+        help="When 1, fail if --out-dir already contains non-empty bridge content.",
+    )
     parser.add_argument("--train-ratio", type=float, default=0.85)
     parser.add_argument("--min-confidence", type=float, default=0.0)
     parser.add_argument("--val-ratio", type=float, default=0.15)
@@ -1170,6 +1202,10 @@ def main() -> int:
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
+    strict_fail_on_reuse = bool(_env_flag_int(args.fail_on_path_reuse, 0))
+    if strict_fail_on_reuse and _strict_out_dir_has_existing_content(out_dir):
+        print(f"[bridge] strict mode: refusing non-empty out-dir reuse: {out_dir}")
+        return 2
     out_dir.mkdir(parents=True, exist_ok=True)
     records: List[Dict[str, Any]] = []
 

@@ -196,6 +196,17 @@ PY
   echo "${counts}"
 }
 
+phase08_bridge_outputs_exist() {
+  local out_root="$1"
+  [[ -f "${out_root}/bridge_summary.json" ]] \
+    || [[ -f "${out_root}/train/manifest.json" ]] \
+    || [[ -f "${out_root}/val/manifest.json" ]] \
+    || [[ -d "${out_root}/train/meta" ]] \
+    || [[ -d "${out_root}/train/data" ]] \
+    || [[ -d "${out_root}/val/meta" ]] \
+    || [[ -d "${out_root}/val/data" ]]
+}
+
 stage00_inventory() {
   log_info "phase00_inventory: collecting system, scheduler and rendering preflight"
   cat >"${REPORT_FILE}" <<EOF
@@ -1024,6 +1035,7 @@ PY
             --max-steps '${SMOLVLA_JEPA_EXPORT_MAX_STEPS}' \
             --seed '${SMOLVLA_JEPA_EXPORT_SEED}' \
             --out '${SMOLVLA_JEPA_EXPORT_OUT}' \
+            --full-latents-export '${SMOLVLA_JEPA_EXPORT_FULL_LATENTS}' \
             --jepa-repo '${SMOLVLA_VGG_REPO}/jepa-wms' \
             --jepa-ckpt '${SMOLVLA_JEPA_CKPT}' \
             --cem-horizon '${SMOLVLA_JEPA_CEM_HORIZON}' \
@@ -1058,6 +1070,15 @@ Executed: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
 
 output_dir="${SMOLVLA_DATA_ROOT}"
+
+# phase08 bridge overwrite guard: refuse known bridge output reuse in strict mode.
+if [[ "${SMOLVLA_FAIL_ON_PATH_REUSE:-0}" == "1" ]] && phase08_bridge_outputs_exist "${output_dir}"; then
+  log_error "phase08 bridge overwrite guard blocked reuse under ${output_dir}"
+  append_passfail "FAIL" "phase08 bridge overwrite guard blocked existing outputs while SMOLVLA_FAIL_ON_PATH_REUSE=1 (${output_dir})"
+  append_decision "phase08 bridge overwrite guard" "strict path reuse policy blocked bridge output overwrite" "FAIL"
+  return 1
+fi
+
 mkdir -p "${output_dir}" "${SMOLVLA_DATA_ROOT}/val"
 
 if ! check_jepa_source_has_trajectory_artifacts "${SMOLVLA_JEPA_SOURCE}"; then
@@ -1092,6 +1113,7 @@ fi
 if ! log_capture "Bridge conversion" bash -lc "python '${SMOLVLA_PIPE_ROOT}/bridge_builder.py' \
   --jepa-source '${SMOLVLA_JEPA_SOURCE}' \
   --out-dir '${SMOLVLA_DATA_ROOT}' \
+  --fail-on-path-reuse '${SMOLVLA_FAIL_ON_PATH_REUSE}' \
   --train-ratio '${SMOLVLA_BRIDGE_TRAIN_RATIO}' \
   --min-confidence '${SMOLVLA_BRIDGE_MIN_CONFIDENCE}' \
   --val-ratio '${SMOLVLA_BRIDGE_VAL_RATIO}' \

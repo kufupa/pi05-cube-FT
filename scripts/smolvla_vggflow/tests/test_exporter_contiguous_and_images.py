@@ -130,6 +130,48 @@ class ExporterContiguousTests(unittest.TestCase):
                 rng=np.random.default_rng(0),
             )
 
+    def test_cem_first_action_truncates_latents_when_full_export_disabled(self):
+        latent_dim = 300
+
+        class _LatentModel:
+            def unroll(self, *args, **kwargs):
+                return torch.arange(latent_dim, dtype=torch.float32).view(1, 1, latent_dim)
+
+        _, payload = jepa_export.cem_first_action(
+            model=_LatentModel(),
+            z=torch.zeros((1, 1, 8), dtype=torch.float32),
+            action_dim=4,
+            horizon=1,
+            pop_size=1,
+            cem_iters=1,
+            device=torch.device("cpu"),
+            rng=np.random.default_rng(0),
+            full_latents_export=False,
+        )
+        self.assertEqual(len(payload["latent_pred"]), 256)
+        self.assertEqual(int(payload["latent_pred_dim"]), latent_dim)
+
+    def test_cem_first_action_keeps_full_latents_when_enabled(self):
+        latent_dim = 300
+
+        class _LatentModel:
+            def unroll(self, *args, **kwargs):
+                return torch.arange(latent_dim, dtype=torch.float32).view(1, 1, latent_dim)
+
+        _, payload = jepa_export.cem_first_action(
+            model=_LatentModel(),
+            z=torch.zeros((1, 1, 8), dtype=torch.float32),
+            action_dim=4,
+            horizon=1,
+            pop_size=1,
+            cem_iters=1,
+            device=torch.device("cpu"),
+            rng=np.random.default_rng(0),
+            full_latents_export=True,
+        )
+        self.assertEqual(len(payload["latent_pred"]), latent_dim)
+        self.assertEqual(int(payload["latent_pred_dim"]), latent_dim)
+
 
 if __name__ == "__main__":
     unittest.main()

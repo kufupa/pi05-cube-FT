@@ -18,9 +18,14 @@ class StageWiringContractTests(unittest.TestCase):
         self.assertIn("--wm-heavy-split-enabled '${SMOLVLA_BRIDGE_WM_HEAVY_SPLIT}'", text)
         self.assertIn("--wm-heavy-val-fraction", text)
         self.assertIn("--wm-heavy-score-margin", text)
+        self.assertIn("--fail-on-path-reuse '${SMOLVLA_FAIL_ON_PATH_REUSE}'", text)
         self.assertIn("SMOLVLA_BRIDGE_WM_HEAVY_SPLIT", text)
         self.assertIn("SMOLVLA_BRIDGE_WM_HEAVY_JEPA_FRACTION", text)
         self.assertIn("SMOLVLA_BRIDGE_WM_SCORE_MARGIN", text)
+        self.assertIn("phase08 bridge overwrite guard", text)
+        self.assertIn("bridge_summary.json", text)
+        self.assertIn("train/meta", text)
+        self.assertIn("val/meta", text)
 
     def test_config_defaults_strict_thresholds_and_full_latents(self):
         cfg = Path("scripts/smolvla_vggflow/config.sh").read_text(encoding="utf-8")
@@ -44,10 +49,14 @@ class StageWiringContractTests(unittest.TestCase):
         exporter = Path("scripts/smolvla_vggflow/jepa_cem_paired_pushv3_export.py").read_text(encoding="utf-8")
         self.assertIn('"--store-cem-plan-seq"', exporter)
         self.assertIn('"--store-smolvla-action"', exporter)
+        self.assertIn('"--full-latents-export"', exporter)
         self.assertIn("store_cem_plan_seq = _as_bool(args.store_cem_plan_seq)", exporter)
         self.assertIn("store_smolvla_action = _as_bool(args.store_smolvla_action)", exporter)
+        self.assertIn("full_latents_export = _as_bool(args.full_latents_export)", exporter)
         self.assertIn('"store_cem_plan_seq"', exporter)
         self.assertIn('"store_smolvla_action"', exporter)
+        self.assertIn('"full_latents_exported"', exporter)
+        self.assertIn('"latent_pred_dim"', exporter)
 
     def test_stage09_autoselect_handles_init_checkpoint_default(self):
         stage09 = Path("scripts/slurm/stage09_final_eval_and_bundle.slurm").read_text(encoding="utf-8")

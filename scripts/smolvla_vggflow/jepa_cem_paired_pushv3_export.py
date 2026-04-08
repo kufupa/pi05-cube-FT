@@ -95,6 +95,26 @@ def _compute_export_quality_metrics(episodes: list[dict[str, Any]]) -> dict[str,
     }
 
 
+def _infer_manifest_latent_pred_dim(episodes: list[dict[str, Any]]) -> int | None:
+    for episode in episodes:
+        plan = episode.get("cem_plan") if isinstance(episode, dict) else None
+        per_step = plan.get("per_step") if isinstance(plan, dict) else []
+        for row in per_step:
+            if not isinstance(row, dict):
+                continue
+            dim = row.get("latent_pred_dim")
+            try:
+                dim_i = int(dim)
+                if dim_i > 0:
+                    return dim_i
+            except Exception:
+                pass
+            latent = row.get("latent_pred")
+            if isinstance(latent, list) and len(latent) > 0:
+                return int(len(latent))
+    return None
+
+
 def _enforce_export_quality_gates(
     metrics: dict[str, float],
     *,
@@ -552,6 +572,7 @@ def cem_first_action(
     cem_iters: int,
     device: torch.device,
     rng: np.random.Generator,
+    full_latents_export: bool = False,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Return first action of best CEM sequence and debug metadata."""
     best_seq = torch.zeros(horizon, action_dim, device=device, dtype=torch.float32)
@@ -584,6 +605,7 @@ def cem_first_action(
     }
     a0 = best_seq[0].detach().cpu().numpy().reshape(-1)
     latent_summary: list[float] = []
+    latent_pred_dim = 0
     if best_z_pred is not None:
         try:
             if isinstance(best_z_pred, dict):
@@ -591,10 +613,15 @@ def cem_first_action(
             else:
                 lat = best_z_pred
             if torch.is_tensor(lat):
-                latent_summary = lat.detach().float().cpu().reshape(-1)[:256].tolist()
+                latent_vec = lat.detach().float().cpu().reshape(-1)
+                latent_pred_dim = int(latent_vec.numel())
+                if full_latents_export:
+                    latent_summary = latent_vec.tolist()
+                else:
+                    latent_summary = latent_vec[:256].tolist()
         except Exception:
             pass
-    return a0, {"meta": meta, "latent_pred": latent_summary}
+    return a0, {"meta": meta, "latent_pred": latent_summary, "latent_pred_dim": latent_pred_dim}
 
 
 def rollout_episode(
@@ -610,6 +637,7 @@ def rollout_episode(
     execution_policy: str,
     store_cem_plan_seq: bool,
     store_smolvla_action: bool,
+    full_latents_export: bool,
     rng: np.random.Generator,
 ) -> dict[str, Any]:
     seed = int(rng.integers(0, 2**31 - 1))
@@ -682,12 +710,14 @@ def rollout_episode(
                     cem_iters,
                     device,
                     rng,
+                    full_latents_export=full_latents_export,
                 )
                 meta = dict(step_record.get("planner_metadata") or {})
                 meta.update(
                     {
                         "horizon": cem_horizon,
                         "population": cem_pop,
+                        "latent_pred_dim": int(cem_dbg.get("latent_pred_dim", 0)),
                     }
                 )
                 step_record.update(
@@ -696,6 +726,7 @@ def rollout_episode(
                         "cem_cost": cem_dbg["meta"]["cem_cost"],
                         "cem_seed": cem_dbg["meta"]["cem_seed"],
                         "latent_pred": cem_dbg["latent_pred"],
+                        "latent_pred_dim": int(cem_dbg.get("latent_pred_dim", 0)),
                         "planner_metadata": meta,
                     }
                 )
@@ -820,6 +851,12 @@ def main() -> int:
         help="Store per-step raw SmolVLA action vectors when available (1=yes,0=no).",
     )
     ap.add_argument(
+        "--full-latents-export",
+        type=int,
+        default=int(os.environ.get("SMOLVLA_JEPA_EXPORT_FULL_LATENTS", "1")),
+        help="Store full latent vectors in per-step telemetry (1=yes,0=truncate to summary).",
+    )
+    ap.add_argument(
         "--policy-checkpoint",
         default=os.environ.get("SMOLVLA_INIT_CHECKPOINT", ""),
         help="SmolVLA HF id or local dir; empty disables. Default: $SMOLVLA_INIT_CHECKPOINT.",
@@ -827,6 +864,7 @@ def main() -> int:
     args = ap.parse_args()
     store_cem_plan_seq = _as_bool(args.store_cem_plan_seq)
     store_smolvla_action = _as_bool(args.store_smolvla_action)
+    full_latents_export = _as_bool(args.full_latents_export)
 
     dev_name = args.device
     if dev_name == "auto":
@@ -889,6 +927,7 @@ def main() -> int:
                 args.execution_policy,
                 store_cem_plan_seq,
                 store_smolvla_action,
+                full_latents_export,
                 rng,
             )
         )
@@ -914,6 +953,7 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     traj_path = args.out / "trajectories.pt"
     torch.save(episodes, traj_path)
+    latent_pred_dim = _infer_manifest_latent_pred_dim(episodes)
 
     manifest = {
         "schema_version": SCHEMA_VERSION,
@@ -937,6 +977,8 @@ def main() -> int:
         "execution_policy": args.execution_policy,
         "store_cem_plan_seq": store_cem_plan_seq,
         "store_smolvla_action": store_smolvla_action,
+        "full_latents_exported": full_latents_export,
+        "latent_pred_dim": latent_pred_dim,
         "policy_load_vlm_weights": os.environ.get("SMOLVLA_JEPA_EXPORT_POLICY_LOAD_VLM_WEIGHTS", "1"),
         "bridge_hint": "Point SMOLVLA_JEPA_SOURCE at this directory for phase08.",
         "quality_metrics": quality_metrics,
@@ -949,6 +991,7 @@ def main() -> int:
         "storage_options": {
             "store_cem_plan_seq": store_cem_plan_seq,
             "store_smolvla_action": store_smolvla_action,
+            "full_latents_exported": full_latents_export,
         },
     }
     (args.out / "export_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")

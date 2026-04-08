@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 MODULE = Path(__file__).resolve().parents[1] / "bridge_builder.py"
@@ -81,6 +82,44 @@ class BridgeQualityGateTests(unittest.TestCase):
         ]
         metrics = bridge_builder._compute_quality_metrics(records)
         self.assertEqual(float(metrics["image_nonblank_ratio"]), 0.0)
+
+    def test_bridge_builder_strict_out_dir_rejects_existing_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "bridge"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "existing.txt").write_text("stale", encoding="utf-8")
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "bridge_builder.py",
+                    "--out-dir",
+                    str(out_dir),
+                    "--fail-on-path-reuse",
+                    "1",
+                ],
+            ):
+                rc = bridge_builder.main()
+            self.assertNotEqual(rc, 0)
+
+    def test_bridge_builder_strict_out_dir_allows_empty_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "bridge"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "bridge_builder.py",
+                    "--out-dir",
+                    str(out_dir),
+                    "--fail-on-path-reuse",
+                    "1",
+                ],
+            ):
+                rc = bridge_builder.main()
+            self.assertEqual(rc, 0)
+            self.assertTrue((out_dir / "bridge_summary.json").is_file())
 
 
 if __name__ == "__main__":
