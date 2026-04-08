@@ -192,6 +192,54 @@ def _as_contiguous_rgb_uint8(arr: Any) -> np.ndarray:
     return np.ascontiguousarray(x)
 
 
+def _encode_image_payload(image: Any) -> np.ndarray:
+    """Return compact image payload as contiguous HWC uint8."""
+    return _as_contiguous_rgb_uint8(image)
+
+
+def _encode_latent_payload(latent_vec: Any, full_latents_export: bool) -> Any:
+    """Return compact latent payload as tensor/ndarray (never Python list)."""
+    if torch.is_tensor(latent_vec):
+        payload = latent_vec.detach().float().cpu().reshape(-1)
+        return payload if full_latents_export else payload[:256]
+    payload = np.asarray(latent_vec, dtype=np.float32).reshape(-1)
+    return payload if full_latents_export else payload[:256]
+
+
+class EpisodeShardWriter:
+    """Write episode shards incrementally to bound exporter memory usage."""
+
+    def __init__(self, out_dir: Path, episodes_per_shard: int = 1) -> None:
+        self.out_dir = Path(out_dir)
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.episodes_per_shard = int(episodes_per_shard)
+        if self.episodes_per_shard <= 0:
+            raise ValueError("episodes_per_shard must be > 0")
+        self._pending: list[dict[str, Any]] = []
+        self._shard_index = 0
+        self._written_files: list[Path] = []
+
+    def _flush_pending(self) -> Path | None:
+        if not self._pending:
+            return None
+        shard_path = self.out_dir / f"episodes_shard_{self._shard_index:06d}.pt"
+        torch.save(list(self._pending), shard_path)
+        self._pending.clear()
+        self._shard_index += 1
+        self._written_files.append(shard_path)
+        return shard_path
+
+    def write_episode(self, episode: dict[str, Any]) -> Path | None:
+        self._pending.append(episode)
+        if len(self._pending) >= self.episodes_per_shard:
+            return self._flush_pending()
+        return None
+
+    def finalize(self) -> list[Path]:
+        self._flush_pending()
+        return list(self._written_files)
+
+
 def _collect_step_image(obs: Any, env: Any) -> np.ndarray:
     img = _find_image(obs)
     if img is None:
