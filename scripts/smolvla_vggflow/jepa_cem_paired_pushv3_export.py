@@ -806,7 +806,7 @@ def rollout_episode(
         rss_context = f"ep={episode_index if episode_index is not None else '?'} step={step_idx}"
         if int(rss_log_interval_steps) > 0 and (step_idx % int(rss_log_interval_steps) == 0):
             print(f"[cem_paired_export][rss] {rss_context} rss_gb={_current_rss_gb():.3f}")
-        _enforce_rss_limit(max_rss_gb=max_rss_gb, context=rss_context)
+        _enforce_rss_limit(max_rss_gb=max_rss_gb, context=f"{rss_context} pre_step")
 
         try:
             images.append(_to_rgb_list(_collect_step_image(obs, env)))
@@ -910,6 +910,7 @@ def rollout_episode(
         else:
             obs, reward, done, info = step_out
 
+        _enforce_rss_limit(max_rss_gb=max_rss_gb, context=f"{rss_context} post_step")
         if done:
             break
 
@@ -1065,59 +1066,71 @@ def main() -> int:
     episode_writer = EpisodeShardWriter(staging_episodes_dir, episodes_per_shard=1)
     metrics_acc = ExportQualityAccumulator()
     latent_pred_dim: int | None = None
-    for ep in range(args.episodes):
-        pk = str(uuid.uuid4())
-        episode = rollout_episode(
-            env,
-            args.max_steps,
-            pk,
-            wm_bundle,
-            smolvla_bundle,
-            task_text,
-            args.cem_horizon,
-            args.cem_pop,
-            args.cem_iters,
-            args.execution_policy,
-            store_cem_plan_seq,
-            store_smolvla_action,
-            full_latents_export,
-            rng,
-            max_rss_gb=float(args.max_rss_gb),
-            rss_log_interval_steps=int(args.rss_log_interval_steps),
-            episode_index=ep,
-        )
-        episode_writer.write_episode(episode)
-        metrics_acc.update(episode)
-        if latent_pred_dim is None:
-            latent_pred_dim = _infer_episode_latent_pred_dim(episode)
-        del episode
-
-    written_episode_files = episode_writer.finalize()
-    quality_metrics = metrics_acc.to_metrics()
+    written_episode_files: list[Path] = []
+    quality_metrics: dict[str, float] = {}
     try:
-        _enforce_export_quality_gates(
-            quality_metrics,
-            max_wm_error_rate=float(args.max_wm_error_rate),
-            max_policy_error_rate=float(args.max_policy_error_rate),
-            require_images=_as_bool(args.require_images),
-            max_heuristic_ratio=float(args.max_heuristic_fallback_episode_ratio),
-        )
-    except RuntimeError as exc:
-        _cleanup_episode_shards(staging_episodes_dir)
-        print(f"[cem_paired_export] quality gate failed: {exc}")
-        return 1
+        try:
+            for ep in range(args.episodes):
+                pk = str(uuid.uuid4())
+                episode = rollout_episode(
+                    env,
+                    args.max_steps,
+                    pk,
+                    wm_bundle,
+                    smolvla_bundle,
+                    task_text,
+                    args.cem_horizon,
+                    args.cem_pop,
+                    args.cem_iters,
+                    args.execution_policy,
+                    store_cem_plan_seq,
+                    store_smolvla_action,
+                    full_latents_export,
+                    rng,
+                    max_rss_gb=float(args.max_rss_gb),
+                    rss_log_interval_steps=int(args.rss_log_interval_steps),
+                    episode_index=ep,
+                )
+                episode_writer.write_episode(episode)
+                metrics_acc.update(episode)
+                if latent_pred_dim is None:
+                    latent_pred_dim = _infer_episode_latent_pred_dim(episode)
+                del episode
+            written_episode_files = episode_writer.finalize()
+            quality_metrics = metrics_acc.to_metrics()
+        except RuntimeError as exc:
+            _cleanup_episode_shards(staging_episodes_dir)
+            print(f"[cem_paired_export] episode generation failed: {exc}")
+            return 1
+        except Exception as exc:
+            _cleanup_episode_shards(staging_episodes_dir)
+            print(f"[cem_paired_export] unexpected episode generation failure: {exc}")
+            return 1
 
-    try:
-        _promote_episode_shards(staging_episodes_dir, episodes_dir)
-    except Exception as exc:
-        _cleanup_episode_shards(staging_episodes_dir)
-        print(f"[cem_paired_export] failed to promote episode shards: {exc}")
-        return 1
+        try:
+            _enforce_export_quality_gates(
+                quality_metrics,
+                max_wm_error_rate=float(args.max_wm_error_rate),
+                max_policy_error_rate=float(args.max_policy_error_rate),
+                require_images=_as_bool(args.require_images),
+                max_heuristic_ratio=float(args.max_heuristic_fallback_episode_ratio),
+            )
+        except RuntimeError as exc:
+            _cleanup_episode_shards(staging_episodes_dir)
+            print(f"[cem_paired_export] quality gate failed: {exc}")
+            return 1
 
-    try:
-        env.close()
-    except Exception:
-        pass
+        try:
+            _promote_episode_shards(staging_episodes_dir, episodes_dir)
+        except Exception as exc:
+            _cleanup_episode_shards(staging_episodes_dir)
+            print(f"[cem_paired_export] failed to promote episode shards: {exc}")
+            return 1
+    finally:
+        try:
+            env.close()
+        except Exception:
+            pass
 
     manifest = {
         "schema_version": SCHEMA_VERSION,

@@ -5,6 +5,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -178,6 +179,135 @@ def test_rss_guard_raises_when_limit_exceeded(monkeypatch):
     monkeypatch.setattr(jepa_export, "_current_rss_gb", lambda: 12.5)
     with pytest.raises(RuntimeError):
         jepa_export._enforce_rss_limit(max_rss_gb=10.0, context="ep=0 step=0")
+
+
+def test_rss_guard_noop_when_limit_disabled(monkeypatch):
+    def _unexpected_rss_read() -> float:
+        raise AssertionError("rss sampler should not be called when max_rss_gb <= 0")
+
+    monkeypatch.setattr(jepa_export, "_current_rss_gb", _unexpected_rss_read)
+    jepa_export._enforce_rss_limit(max_rss_gb=0.0, context="ep=0 step=0")
+    jepa_export._enforce_rss_limit(max_rss_gb=-1.0, context="ep=0 step=0")
+
+
+def test_rss_guard_no_raise_when_under_limit(monkeypatch):
+    monkeypatch.setattr(jepa_export, "_current_rss_gb", lambda: 9.99)
+    jepa_export._enforce_rss_limit(max_rss_gb=10.0, context="ep=0 step=0")
+
+
+def test_rollout_enforces_rss_pre_and_post_step(monkeypatch):
+    class _FakeEnv:
+        def __init__(self):
+            self.action_space = types.SimpleNamespace(shape=(4,))
+
+        def reset(self, seed=None):
+            del seed
+            return np.zeros(12, dtype=np.float32)
+
+        def step(self, action):
+            del action
+            return np.zeros(12, dtype=np.float32), 0.0, True, {"success": True}
+
+    calls: list[str] = []
+
+    def _record_enforce(*, max_rss_gb: float, context: str) -> None:
+        assert max_rss_gb == 10.0
+        calls.append(context)
+
+    monkeypatch.setattr(jepa_export, "_enforce_rss_limit", _record_enforce)
+    monkeypatch.setattr(
+        jepa_export,
+        "_select_executed_action",
+        lambda **_kwargs: {"action_executed": [0.0, 0.0, 0.0, 0.0], "policy_source": "heuristic"},
+    )
+
+    jepa_export.rollout_episode(
+        env=_FakeEnv(),
+        max_steps=1,
+        pair_key="pair-key",
+        wm_bundle=None,
+        smolvla_bundle=None,
+        task_text="push the puck to the goal",
+        cem_horizon=4,
+        cem_pop=8,
+        cem_iters=2,
+        execution_policy="cem_primary",
+        store_cem_plan_seq=True,
+        store_smolvla_action=True,
+        full_latents_export=False,
+        rng=np.random.default_rng(0),
+        max_rss_gb=10.0,
+        rss_log_interval_steps=0,
+        episode_index=7,
+    )
+
+    assert calls == ["ep=7 step=0 pre_step", "ep=7 step=0 post_step"]
+
+
+def test_main_cleans_up_and_closes_env_on_guard_failure(monkeypatch):
+    created_envs: list[Any] = []
+    cleanup_paths: list[Path] = []
+
+    class _FakeEnv:
+        def __init__(self):
+            self.action_space = types.SimpleNamespace(shape=(4,))
+            self.render_mode = None
+            self.closed = False
+            created_envs.append(self)
+
+        def set_task(self, _task):
+            return None
+
+        def close(self):
+            self.closed = True
+
+    class _FakeML1:
+        def __init__(self, task: str, seed: int):
+            del seed
+            self.train_classes = {task: _FakeEnv}
+            self.train_tasks = [object()]
+
+    monkeypatch.setitem(sys.modules, "metaworld", types.SimpleNamespace(ML1=_FakeML1))
+    monkeypatch.setattr(jepa_export, "_try_load_smolvla_exec", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(jepa_export, "_try_load_wm", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        jepa_export,
+        "rollout_episode",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("rss guard tripped")),
+    )
+    original_cleanup = jepa_export._cleanup_episode_shards
+
+    def _cleanup_spy(path: Path) -> None:
+        cleanup_paths.append(Path(path))
+        original_cleanup(path)
+
+    monkeypatch.setattr(jepa_export, "_cleanup_episode_shards", _cleanup_spy)
+    monkeypatch.setenv("SMOLVLA_JEPA_EXPORT_SKIP_WM", "1")
+
+    with tempfile.TemporaryDirectory() as td:
+        out_dir = Path(td) / "out"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "jepa_cem_paired_pushv3_export.py",
+                "--out",
+                str(out_dir),
+                "--episodes",
+                "1",
+                "--max-steps",
+                "1",
+                "--device",
+                "cpu",
+            ],
+        )
+        rc = jepa_export.main()
+
+    assert rc == 1
+    assert cleanup_paths
+    assert any(path.name.startswith(".episodes_staging_") for path in cleanup_paths)
+    assert created_envs
+    assert created_envs[0].closed
 
 
 class ExporterMemoryBoundedTests(unittest.TestCase):
