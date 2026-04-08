@@ -5,9 +5,24 @@ This directory stores the execution artifacts for the full plan implementation.
 ## Quick entry points
 
 - `run_stage.sh <stage>`: run a single numbered/plan phase locally.
+- `preflight_dependency_order.sh`: run deterministic dependency checks in strict order (`CHECK_01_SLURM` through `CHECK_07_BRIDGE`) before submitting workflow stages.
 - `submit_workflow.sh`: submit the full **11-stage** serial Slurm DAG and write a `workflow_*.json` (includes **`generated_at_utc`**, **`run_id`** from exported `RUN_ID`; override path with `SMOLVLA_WORKFLOW_JSON`).
 - `smolvla_workflow_launcher.py --submit --branch-parallel`: optional fan-out/fan-in submit (same 11 scripts; **do not** use with `SMOLVLA_STAGE11_ENABLED=1`).
 - `watch_workflow.sh <workflow.json> [-- extra args]`: forwards to `watch_workflow.py` (e.g. `--auto-resubmit --max-retries 2`). Auto-resubmit adds `--gres=gpu:1` only when `scontrol` shows GPU in **Gres** or **AllocTRES/ReqTRES**, or the failure class was `no-gpu` (CPU stages such as `stage01b` stay CPU-only on `node_resources` retry). Job state uses **`sacct`** with **JobID-aware row selection** when Slurm returns multiple lines per id.
+
+## Dependency-order preflight
+
+Run this from the repo root before full workflow submission when validating a host or env setup:
+
+```bash
+bash scripts/smolvla_vggflow/preflight_dependency_order.sh
+```
+
+Expected behavior:
+- The script executes checks in deterministic dependency order and prints stage markers in sequence:
+  `CHECK_01_SLURM`, `CHECK_02_ENVS`, `CHECK_03_CUDA_RENDER`, `CHECK_04_JEPA`, `CHECK_05_SMOLVLA`, `CHECK_06_EXPORT`, `CHECK_07_BRIDGE`.
+- Each stage emits practical PASS/FAIL lines for required commands, env python executables, CUDA/render readiness, JEPA/SmolVLA script presence, export config, and bridge dataset roots.
+- The script exits `0` only when all checks pass; any failed dependency returns non-zero.
 
 ### Execution policy
 
