@@ -20,6 +20,7 @@ import argparse
 import importlib.util
 import json
 import os
+import shutil
 import site
 import sys
 import uuid
@@ -47,52 +48,10 @@ def _as_bool(value: Any) -> bool:
 
 
 def _compute_export_quality_metrics(episodes: list[dict[str, Any]]) -> dict[str, float]:
-    total_episodes = len(episodes)
-    episodes_with_images = 0
-    heuristic_episodes = 0
-    total_steps = 0
-    wm_error_steps = 0
-    policy_error_steps = 0
-
+    metrics_acc = ExportQualityAccumulator()
     for episode in episodes:
-        images = episode.get("images")
-        if isinstance(images, list) and len(images) > 0:
-            episodes_with_images += 1
-        per_step = (
-            ((episode.get("cem_plan") or {}).get("per_step") if isinstance(episode.get("cem_plan"), dict) else [])
-            or []
-        )
-        has_heuristic = False
-        for row in per_step:
-            if not isinstance(row, dict):
-                continue
-            total_steps += 1
-            policy_source = str(row.get("policy_source", "")).strip()
-            if policy_source in {"heuristic_fallback", "heuristic"}:
-                has_heuristic = True
-            planner_metadata = row.get("planner_metadata") if isinstance(row.get("planner_metadata"), dict) else {}
-            if isinstance(planner_metadata, dict):
-                if planner_metadata.get("wm_step_error"):
-                    wm_error_steps += 1
-                if planner_metadata.get("policy_exec_error"):
-                    policy_error_steps += 1
-        if not has_heuristic:
-            policy_label = str((episode.get("meta") or {}).get("policy", "")).strip() if isinstance(episode.get("meta"), dict) else ""
-            has_heuristic = policy_label in {"heuristic_fallback", "heuristic"}
-        if has_heuristic:
-            heuristic_episodes += 1
-
-    wm_step_error_rate = float(wm_error_steps / total_steps) if total_steps > 0 else 0.0
-    policy_exec_error_rate = float(policy_error_steps / total_steps) if total_steps > 0 else 0.0
-    heuristic_ratio = float(heuristic_episodes / total_episodes) if total_episodes > 0 else 0.0
-    return {
-        "total_episodes": float(total_episodes),
-        "episodes_with_images": float(episodes_with_images),
-        "total_steps": float(total_steps),
-        "wm_step_error_rate": wm_step_error_rate,
-        "policy_exec_error_rate": policy_exec_error_rate,
-        "heuristic_fallback_episode_ratio": heuristic_ratio,
-    }
+        metrics_acc.update(episode)
+    return metrics_acc.to_metrics()
 
 
 @dataclass
@@ -179,12 +138,25 @@ def _infer_episode_latent_pred_dim(episode: dict[str, Any]) -> int | None:
     return None
 
 
-def _infer_manifest_latent_pred_dim(episodes: list[dict[str, Any]]) -> int | None:
-    for episode in episodes:
-        dim = _infer_episode_latent_pred_dim(episode)
-        if dim is not None:
-            return dim
-    return None
+def _cleanup_episode_shards(path: Path) -> None:
+    target = Path(path)
+    if not target.exists():
+        return
+    if target.is_dir():
+        shutil.rmtree(target, ignore_errors=True)
+        return
+    try:
+        target.unlink()
+    except Exception:
+        pass
+
+
+def _promote_episode_shards(staging_dir: Path, final_dir: Path) -> None:
+    src = Path(staging_dir)
+    dst = Path(final_dir)
+    if dst.exists():
+        _cleanup_episode_shards(dst)
+    os.replace(src, dst)
 
 
 def _enforce_export_quality_gates(
@@ -1035,9 +1007,11 @@ def main() -> int:
     if tasks:
         env.set_task(tasks[0])
 
+    args.out.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(args.seed)
     episodes_dir = args.out / "episodes"
-    episode_writer = EpisodeShardWriter(episodes_dir, episodes_per_shard=1)
+    staging_episodes_dir = args.out / f".episodes_staging_{uuid.uuid4().hex}"
+    episode_writer = EpisodeShardWriter(staging_episodes_dir, episodes_per_shard=1)
     metrics_acc = ExportQualityAccumulator()
     latent_pred_dim: int | None = None
     for ep in range(args.episodes):
@@ -1075,15 +1049,21 @@ def main() -> int:
             max_heuristic_ratio=float(args.max_heuristic_fallback_episode_ratio),
         )
     except RuntimeError as exc:
+        _cleanup_episode_shards(staging_episodes_dir)
         print(f"[cem_paired_export] quality gate failed: {exc}")
+        return 1
+
+    try:
+        _promote_episode_shards(staging_episodes_dir, episodes_dir)
+    except Exception as exc:
+        _cleanup_episode_shards(staging_episodes_dir)
+        print(f"[cem_paired_export] failed to promote episode shards: {exc}")
         return 1
 
     try:
         env.close()
     except Exception:
         pass
-
-    args.out.mkdir(parents=True, exist_ok=True)
 
     manifest = {
         "schema_version": SCHEMA_VERSION,

@@ -142,6 +142,37 @@ def test_episode_shard_writer_flush_writes_per_episode_files():
         assert indices == [0, 1]
 
 
+def test_promote_episode_shards_replaces_existing_destination():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        staging_dir = root / ".episodes_staging"
+        final_dir = root / "episodes"
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        final_dir.mkdir(parents=True, exist_ok=True)
+        (final_dir / "old.txt").write_text("stale", encoding="utf-8")
+        (staging_dir / "episode_000000.pt").write_bytes(b"fresh")
+
+        jepa_export._promote_episode_shards(staging_dir, final_dir)
+
+        assert not staging_dir.exists()
+        assert final_dir.is_dir()
+        assert (final_dir / "episode_000000.pt").is_file()
+        assert not (final_dir / "old.txt").exists()
+
+
+def test_cleanup_episode_shards_is_idempotent():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        staging_dir = root / ".episodes_staging"
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        (staging_dir / "episode_000000.pt").write_bytes(b"fresh")
+
+        jepa_export._cleanup_episode_shards(staging_dir)
+        assert not staging_dir.exists()
+        jepa_export._cleanup_episode_shards(staging_dir)
+        assert not staging_dir.exists()
+
+
 class ExporterMemoryBoundedTests(unittest.TestCase):
     def test_incremental_metrics_match_legacy_metrics(self):
         episodes = [
