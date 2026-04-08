@@ -216,23 +216,29 @@ class EpisodeShardWriter:
         if self.episodes_per_shard <= 0:
             raise ValueError("episodes_per_shard must be > 0")
         self._pending: list[dict[str, Any]] = []
-        self._shard_index = 0
+        self._episode_index = 0
         self._written_files: list[Path] = []
 
-    def _flush_pending(self) -> Path | None:
+    def _write_episode_file(self, episode: dict[str, Any]) -> Path:
+        episode_path = self.out_dir / f"episode_{self._episode_index:06d}.pt"
+        torch.save(episode, episode_path)
+        self._episode_index += 1
+        self._written_files.append(episode_path)
+        return episode_path
+
+    def _flush_pending(self) -> list[Path]:
         if not self._pending:
-            return None
-        shard_path = self.out_dir / f"episodes_shard_{self._shard_index:06d}.pt"
-        torch.save(list(self._pending), shard_path)
+            return []
+        pending = list(self._pending)
         self._pending.clear()
-        self._shard_index += 1
-        self._written_files.append(shard_path)
-        return shard_path
+        return [self._write_episode_file(episode) for episode in pending]
 
     def write_episode(self, episode: dict[str, Any]) -> Path | None:
         self._pending.append(episode)
         if len(self._pending) >= self.episodes_per_shard:
-            return self._flush_pending()
+            written = self._flush_pending()
+            if written:
+                return written[-1]
         return None
 
     def finalize(self) -> list[Path]:
