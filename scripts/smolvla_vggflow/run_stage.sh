@@ -728,7 +728,9 @@ stage06_baseline_eval() {
   cat >"${REPORT_FILE}" <<EOF
 # phase06_baseline_eval
 Episodes: ${SMOLVLA_BASELINE_EPISODES}
+Episode length: ${SMOLVLA_BASELINE_EPISODE_LENGTH}
 Device: ${SMOLVLA_BASELINE_DEVICE}
+AMP: ${SMOLVLA_BASELINE_USE_AMP}
 Video: ${SMOLVLA_BASELINE_VIDEO} (len=${SMOLVLA_BASELINE_VIDEO_LENGTH}, interval=${SMOLVLA_BASELINE_VIDEO_INTERVAL})
 Seed: ${SMOLVLA_BASELINE_SEED}
 Executed: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -746,6 +748,8 @@ if [[ -z "${cmd}" ]]; then
     cmd="bash '${SMOLVLA_PIPE_ROOT}/run_baseline_eval.sh' \
       --episodes '${SMOLVLA_BASELINE_EPISODES}' \
       --device '${SMOLVLA_BASELINE_DEVICE}' \
+      --use-amp '${SMOLVLA_BASELINE_USE_AMP}' \
+      --episode-length '${SMOLVLA_BASELINE_EPISODE_LENGTH}' \
       --seed '${SMOLVLA_BASELINE_SEED}' \
       --video '${SMOLVLA_BASELINE_VIDEO}' \
       --video-length '${SMOLVLA_BASELINE_VIDEO_LENGTH}' \
@@ -981,6 +985,11 @@ PY
       append_decision "phase07 JEPA export" "missing metaworld dependency" "FAIL"
       return 1
     else
+      if [[ "${SMOLVLA_FAIL_ON_PATH_REUSE:-0}" == "1" ]] && [[ -f "${SMOLVLA_JEPA_EXPORT_OUT}/trajectories.pt" || -f "${SMOLVLA_JEPA_EXPORT_OUT}/export_manifest.json" ]]; then
+        append_passfail "FAIL" "phase07 export would overwrite ${SMOLVLA_JEPA_EXPORT_OUT} while SMOLVLA_FAIL_ON_PATH_REUSE=1"
+        append_decision "phase07 JEPA export" "path reuse guard prevented overwrite" "FAIL"
+        return 1
+      fi
       mkdir -p "${SMOLVLA_JEPA_EXPORT_OUT}"
       local export_policy_ckpt="${SMOLVLA_INIT_CHECKPOINT}"
       if [[ "${SMOLVLA_JEPA_EXPORT_USE_HEURISTIC_EXEC:-0}" == "1" ]]; then
@@ -1007,6 +1016,7 @@ PY
           JEPAWM_CKPT='${JEPA_LOG_BASE}' \
           SMOLVLA_JEPA_EXPORT_POLICY_LOAD_VLM_WEIGHTS='${SMOLVLA_JEPA_EXPORT_POLICY_LOAD_VLM_WEIGHTS}' \
           SMOLVLA_JEPA_EXPORT_POLICY_DEVICE='${SMOLVLA_JEPA_EXPORT_POLICY_DEVICE}' \
+          SMOLVLA_JEPA_EXPORT_FULL_LATENTS='${SMOLVLA_JEPA_EXPORT_FULL_LATENTS}' \
           PYTHONPATH='${site_packages}:'\"\${PYTHONPATH:-}\" \
           '${SMOLVLA_LEROBOT_ENV_DIR}/bin/python' '${SMOLVLA_PIPE_ROOT}/jepa_cem_paired_pushv3_export.py' \
             --task '${SMOLVLA_JEPA_TASK}' \
@@ -1020,7 +1030,13 @@ PY
             --cem-pop '${SMOLVLA_JEPA_CEM_POP}' \
             --cem-iters '${SMOLVLA_JEPA_CEM_ITERS}' \
             --device '${export_wm_device}' \
-            --policy-checkpoint '${export_policy_ckpt}'
+            --policy-checkpoint '${export_policy_ckpt}' \
+            --execution-policy '${SMOLVLA_JEPA_EXPORT_EXECUTION_POLICY}' \
+            --max-wm-error-rate '${SMOLVLA_JEPA_EXPORT_MAX_WM_ERROR_RATE}' \
+            --max-policy-error-rate '${SMOLVLA_JEPA_EXPORT_MAX_POLICY_ERROR_RATE}' \
+            --require-images '${SMOLVLA_JEPA_EXPORT_REQUIRE_IMAGES}' \
+            --store-cem-plan-seq '${SMOLVLA_JEPA_EXPORT_STORE_CEM_PLAN_SEQ}' \
+            --store-smolvla-action '${SMOLVLA_JEPA_EXPORT_STORE_SMOLVLA_ACTION}'
       "; then
         append_passfail "PASS" "JEPA rollout export written under ${SMOLVLA_JEPA_EXPORT_OUT}"
         append_decision "phase07 JEPA export" "trajectories.pt for bridge_builder" "PASS"
@@ -1080,6 +1096,9 @@ if ! log_capture "Bridge conversion" bash -lc "python '${SMOLVLA_PIPE_ROOT}/brid
   --min-confidence '${SMOLVLA_BRIDGE_MIN_CONFIDENCE}' \
   --val-ratio '${SMOLVLA_BRIDGE_VAL_RATIO}' \
   --min-action-length '${SMOLVLA_BRIDGE_MIN_ACTION_LEN}' \
+  --min-image-coverage '${SMOLVLA_BRIDGE_MIN_IMAGE_COVERAGE}' \
+  --max-heuristic-ratio '${SMOLVLA_BRIDGE_MAX_HEURISTIC_FALLBACK_RATIO}' \
+  --min-action-std '${SMOLVLA_BRIDGE_MIN_ACTION_STD}' \
   ${bridge_no_convert_arg}"; then
   append_passfail "FAIL" "bridge_builder.py exited non-zero (see Bridge conversion log above)"
   append_decision "phase08 bridge design" "bridge conversion command failed" "FAIL"

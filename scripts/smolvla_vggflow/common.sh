@@ -11,17 +11,51 @@ source "${SCRIPT_DIR}/config.sh"
 _base_report_root="${SMOLVLA_REPORT_ROOT}"
 _base_artifact_root="${SMOLVLA_ARTIFACT_ROOT}"
 _base_log_root="${SMOLVLA_LOG_ROOT}"
+_base_data_root="${SMOLVLA_DATA_ROOT}"
+_base_jepa_source="${SMOLVLA_JEPA_SOURCE}"
+_base_jepa_export_out="${SMOLVLA_JEPA_EXPORT_OUT}"
+
+_warn_scope_reuse_nonblocking() {
+  local label="$1"
+  local path="$2"
+  echo "smolvla: ${label} already exists (SMOLVLA_FAIL_ON_PATH_REUSE=1): ${path} -- non-blocking for staged execution; stage-level output guards enforce non-overwrite" >&2
+}
+
 if [[ -n "${SMOLVLA_RUN_SCOPE_ID:-}" ]]; then
-  _scoped_art="${_base_artifact_root}/run_${SMOLVLA_RUN_SCOPE_ID}"
+  _scope_tag="run_${SMOLVLA_RUN_SCOPE_ID}"
+  _scoped_art="${_base_artifact_root}/${_scope_tag}"
+  _scoped_data_root="${_base_data_root}/${_scope_tag}"
+  _scoped_jepa_export_out="${_base_jepa_export_out}/${_scope_tag}"
   if [[ "${SMOLVLA_FAIL_ON_PATH_REUSE:-0}" == "1" ]] && [[ -e "${_scoped_art}" ]]; then
-    echo "smolvla: scoped artifact root already exists (SMOLVLA_FAIL_ON_PATH_REUSE=1): ${_scoped_art}" >&2
-    exit 2
+    _warn_scope_reuse_nonblocking "scoped artifact root" "${_scoped_art}"
+  fi
+  if [[ "${SMOLVLA_FAIL_ON_PATH_REUSE:-0}" == "1" ]] && [[ -e "${_scoped_data_root}" ]]; then
+    _warn_scope_reuse_nonblocking "scoped data root" "${_scoped_data_root}"
+  fi
+  if [[ "${SMOLVLA_FAIL_ON_PATH_REUSE:-0}" == "1" ]] && [[ -e "${_scoped_jepa_export_out}" ]]; then
+    _warn_scope_reuse_nonblocking "scoped JEPA export root" "${_scoped_jepa_export_out}"
   fi
   SMOLVLA_ARTIFACT_ROOT="${_scoped_art}"
-  SMOLVLA_REPORT_ROOT="${_base_report_root}/run_${SMOLVLA_RUN_SCOPE_ID}"
-  SMOLVLA_LOG_ROOT="${_base_log_root}/run_${SMOLVLA_RUN_SCOPE_ID}"
+  SMOLVLA_REPORT_ROOT="${_base_report_root}/${_scope_tag}"
+  SMOLVLA_LOG_ROOT="${_base_log_root}/${_scope_tag}"
+  SMOLVLA_DATA_ROOT="${_scoped_data_root}"
+  SMOLVLA_JEPA_EXPORT_OUT="${_scoped_jepa_export_out}"
   if [[ "${SMOLVLA_VGG_GATE_JSON}" == "${_base_report_root}"/* ]]; then
     SMOLVLA_VGG_GATE_JSON="${SMOLVLA_REPORT_ROOT}${SMOLVLA_VGG_GATE_JSON#${_base_report_root}}"
+  fi
+  if [[ "${SMOLVLA_DECISION_LOG}" == "${_base_report_root}"/* ]]; then
+    SMOLVLA_DECISION_LOG="${SMOLVLA_REPORT_ROOT}${SMOLVLA_DECISION_LOG#${_base_report_root}}"
+  fi
+  if [[ "${SMOLVLA_PRESET_REPORT}" == "${_base_report_root}"/* ]]; then
+    SMOLVLA_PRESET_REPORT="${SMOLVLA_REPORT_ROOT}${SMOLVLA_PRESET_REPORT#${_base_report_root}}"
+  fi
+  if [[ "${SMOLVLA_STAGE_D_DATA_ROOT}" == "${_base_data_root}"/* ]]; then
+    SMOLVLA_STAGE_D_DATA_ROOT="${SMOLVLA_DATA_ROOT}${SMOLVLA_STAGE_D_DATA_ROOT#${_base_data_root}}"
+  fi
+  if [[ "${SMOLVLA_JEPA_SOURCE}" == "${_base_jepa_source}" ]]; then
+    SMOLVLA_JEPA_SOURCE="${SMOLVLA_JEPA_EXPORT_OUT}"
+  elif [[ "${SMOLVLA_JEPA_SOURCE}" == "${_base_jepa_source}"/* ]]; then
+    SMOLVLA_JEPA_SOURCE="${SMOLVLA_JEPA_EXPORT_OUT}${SMOLVLA_JEPA_SOURCE#${_base_jepa_source}}"
   fi
 fi
 
@@ -41,6 +75,7 @@ mkdir -p \
   "${SMOLVLA_DATA_ROOT}" \
   "${SMOLVLA_DATA_ROOT}/train" \
   "${SMOLVLA_DATA_ROOT}/val" \
+  "${SMOLVLA_JEPA_EXPORT_OUT}" \
   "${SMOLVLA_LOG_ROOT}" \
   "${SMOLVLA_LOCK_ROOT}" \
   "${SMOLVLA_TMP_ROOT}"

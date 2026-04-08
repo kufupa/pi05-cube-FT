@@ -608,6 +608,8 @@ def rollout_episode(
     cem_pop: int,
     cem_iters: int,
     execution_policy: str,
+    store_cem_plan_seq: bool,
+    store_smolvla_action: bool,
     rng: np.random.Generator,
 ) -> dict[str, Any]:
     seed = int(rng.integers(0, 2**31 - 1))
@@ -709,6 +711,8 @@ def rollout_episode(
             try:
                 raw_act = _smolvla_exec_action(smolvla_bundle, obs, env, task_text)
                 a_smolvla = np.asarray(raw_act, dtype=np.float32).reshape(-1)
+                if store_smolvla_action:
+                    step_record["action_smolvla_raw"] = a_smolvla.tolist()
             except Exception as exc:
                 meta = dict(step_record.get("planner_metadata") or {})
                 meta["policy_exec_error"] = str(exc)[:200]
@@ -751,7 +755,7 @@ def rollout_episode(
         "done": True,
         "success": success,
         "pair_key": pair_key,
-        "cem_plan": {"per_step": cem_steps},
+        "cem_plan": {"per_step": cem_steps if store_cem_plan_seq else []},
         "meta": {
             "schema_version": SCHEMA_VERSION,
             "pair_key": pair_key,
@@ -779,21 +783,41 @@ def main() -> int:
     ap.add_argument(
         "--execution-policy",
         choices=list(_EXECUTION_POLICIES),
-        default="cem_primary",
+        default=os.environ.get("SMOLVLA_JEPA_EXPORT_EXECUTION_POLICY", "cem_primary"),
         help=(
             "Executed-action arbitration. Default 'cem_primary' enforces WM/CEM-first, "
             "with SmolVLA then heuristic fallback; 'smolvla_primary' is optional ablation."
         ),
     )
     ap.add_argument("--device", default="cuda")
-    ap.add_argument("--max-wm-error-rate", type=float, default=0.05)
-    ap.add_argument("--max-policy-error-rate", type=float, default=0.05)
+    ap.add_argument(
+        "--max-wm-error-rate",
+        type=float,
+        default=float(os.environ.get("SMOLVLA_JEPA_EXPORT_MAX_WM_ERROR_RATE", "0.05")),
+    )
+    ap.add_argument(
+        "--max-policy-error-rate",
+        type=float,
+        default=float(os.environ.get("SMOLVLA_JEPA_EXPORT_MAX_POLICY_ERROR_RATE", "0.05")),
+    )
     ap.add_argument("--max-heuristic-fallback-episode-ratio", type=float, default=0.10)
     ap.add_argument(
         "--require-images",
         type=int,
-        default=1,
+        default=int(os.environ.get("SMOLVLA_JEPA_EXPORT_REQUIRE_IMAGES", "1")),
         help="Require every episode to contain at least one image frame (1=yes,0=no).",
+    )
+    ap.add_argument(
+        "--store-cem-plan-seq",
+        type=int,
+        default=int(os.environ.get("SMOLVLA_JEPA_EXPORT_STORE_CEM_PLAN_SEQ", "1")),
+        help="Store per-step CEM planner records in trajectories (1=yes,0=no).",
+    )
+    ap.add_argument(
+        "--store-smolvla-action",
+        type=int,
+        default=int(os.environ.get("SMOLVLA_JEPA_EXPORT_STORE_SMOLVLA_ACTION", "1")),
+        help="Store per-step raw SmolVLA action vectors when available (1=yes,0=no).",
     )
     ap.add_argument(
         "--policy-checkpoint",
@@ -801,6 +825,8 @@ def main() -> int:
         help="SmolVLA HF id or local dir; empty disables. Default: $SMOLVLA_INIT_CHECKPOINT.",
     )
     args = ap.parse_args()
+    store_cem_plan_seq = _as_bool(args.store_cem_plan_seq)
+    store_smolvla_action = _as_bool(args.store_smolvla_action)
 
     dev_name = args.device
     if dev_name == "auto":
@@ -861,6 +887,8 @@ def main() -> int:
                 args.cem_pop,
                 args.cem_iters,
                 args.execution_policy,
+                store_cem_plan_seq,
+                store_smolvla_action,
                 rng,
             )
         )
@@ -907,6 +935,8 @@ def main() -> int:
         "policy_checkpoint": policy_ckpt or None,
         "policy_loaded": smolvla_bundle is not None,
         "execution_policy": args.execution_policy,
+        "store_cem_plan_seq": store_cem_plan_seq,
+        "store_smolvla_action": store_smolvla_action,
         "policy_load_vlm_weights": os.environ.get("SMOLVLA_JEPA_EXPORT_POLICY_LOAD_VLM_WEIGHTS", "1"),
         "bridge_hint": "Point SMOLVLA_JEPA_SOURCE at this directory for phase08.",
         "quality_metrics": quality_metrics,
@@ -915,6 +945,10 @@ def main() -> int:
             "max_policy_error_rate": float(args.max_policy_error_rate),
             "max_heuristic_fallback_episode_ratio": float(args.max_heuristic_fallback_episode_ratio),
             "require_images": _as_bool(args.require_images),
+        },
+        "storage_options": {
+            "store_cem_plan_seq": store_cem_plan_seq,
+            "store_smolvla_action": store_smolvla_action,
         },
     }
     (args.out / "export_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
