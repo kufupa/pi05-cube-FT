@@ -1054,7 +1054,7 @@ PY
             --store-smolvla-action '${SMOLVLA_JEPA_EXPORT_STORE_SMOLVLA_ACTION}'
       "; then
         append_passfail "PASS" "JEPA rollout export written under ${SMOLVLA_JEPA_EXPORT_OUT}"
-        append_decision "phase07 JEPA export" "trajectories.pt for bridge_builder" "PASS"
+        append_decision "phase07 JEPA export" "episode shard export + manifest for bridge_builder" "PASS"
       else
         append_passfail "FAIL" "JEPA rollout export command failed"
         append_decision "phase07 JEPA export" "metaworld export failed" "FAIL"

@@ -50,6 +50,9 @@ class StageWiringContractTests(unittest.TestCase):
 
     def test_exporter_defines_storage_argparse_and_manifest_fields(self):
         exporter = Path("scripts/smolvla_vggflow/jepa_cem_paired_pushv3_export.py").read_text(encoding="utf-8")
+        self.assertIn('"--episodes-per-shard"', exporter)
+        self.assertIn('SMOLVLA_JEPA_EXPORT_EPISODES_PER_SHARD', exporter)
+        self.assertIn("episodes_per_shard=int(args.episodes_per_shard)", exporter)
         self.assertIn('"--store-cem-plan-seq"', exporter)
         self.assertIn('"--store-smolvla-action"', exporter)
         self.assertIn('"--full-latents-export"', exporter)
@@ -60,6 +63,10 @@ class StageWiringContractTests(unittest.TestCase):
         self.assertIn('"store_smolvla_action"', exporter)
         self.assertIn('"full_latents_exported"', exporter)
         self.assertIn('"latent_pred_dim"', exporter)
+        self.assertIn('"episodes_per_shard"', exporter)
+        self.assertIn('"shard_count"', exporter)
+        self.assertIn('"shard_files"', exporter)
+        self.assertIn('"complete_episodes"', exporter)
 
     def test_stage09_autoselect_handles_init_checkpoint_default(self):
         stage09 = Path("scripts/slurm/stage09_final_eval_and_bundle.slurm").read_text(encoding="utf-8")

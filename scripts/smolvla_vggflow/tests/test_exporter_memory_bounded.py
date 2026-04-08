@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import pickle
 import sys
 import tempfile
@@ -308,6 +309,155 @@ def test_main_cleans_up_and_closes_env_on_guard_failure(monkeypatch):
     assert any(path.name.startswith(".episodes_staging_") for path in cleanup_paths)
     assert created_envs
     assert created_envs[0].closed
+
+
+def test_main_accepts_cli_episodes_per_shard_and_wires_writer(monkeypatch):
+    captured: dict[str, int] = {}
+
+    class _FakeWriter:
+        def __init__(self, out_dir: Path, episodes_per_shard: int = 1):
+            Path(out_dir).mkdir(parents=True, exist_ok=True)
+            captured["episodes_per_shard"] = int(episodes_per_shard)
+
+        def write_episode(self, _episode: dict[str, Any]):
+            return None
+
+        def finalize(self):
+            return []
+
+    class _FakeEnv:
+        def __init__(self):
+            self.action_space = types.SimpleNamespace(shape=(4,))
+            self.render_mode = None
+
+        def set_task(self, _task):
+            return None
+
+        def close(self):
+            return None
+
+    class _FakeML1:
+        def __init__(self, task: str, seed: int):
+            del seed
+            self.train_classes = {task: _FakeEnv}
+            self.train_tasks = [object()]
+
+    monkeypatch.setitem(sys.modules, "metaworld", types.SimpleNamespace(ML1=_FakeML1))
+    monkeypatch.setattr(jepa_export, "_try_load_smolvla_exec", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(jepa_export, "_try_load_wm", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(jepa_export, "_enforce_export_quality_gates", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(jepa_export, "_promote_episode_shards", lambda _src, dst: Path(dst).mkdir(parents=True, exist_ok=True))
+    monkeypatch.setattr(jepa_export, "EpisodeShardWriter", _FakeWriter)
+    monkeypatch.setattr(
+        jepa_export,
+        "rollout_episode",
+        lambda *_args, **_kwargs: {
+            "meta": {"episode_index": 0},
+            "images": [np.zeros((4, 4, 3), dtype=np.uint8)],
+            "cem_plan": {"per_step": [{"latent_pred_dim": 256, "policy_source": "cem_mpc_wm", "planner_metadata": {}}]},
+        },
+    )
+    monkeypatch.setenv("SMOLVLA_JEPA_EXPORT_SKIP_WM", "1")
+
+    with tempfile.TemporaryDirectory() as td:
+        out_dir = Path(td) / "out"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "jepa_cem_paired_pushv3_export.py",
+                "--out",
+                str(out_dir),
+                "--episodes",
+                "1",
+                "--max-steps",
+                "1",
+                "--device",
+                "cpu",
+                "--episodes-per-shard",
+                "3",
+            ],
+        )
+        rc = jepa_export.main()
+
+        assert rc == 0
+        assert captured["episodes_per_shard"] == 3
+        manifest = json.loads((out_dir / "export_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["episodes_per_shard"] == 3
+
+
+def test_main_uses_env_default_episodes_per_shard_when_flag_absent(monkeypatch):
+    captured: dict[str, int] = {}
+
+    class _FakeWriter:
+        def __init__(self, out_dir: Path, episodes_per_shard: int = 1):
+            Path(out_dir).mkdir(parents=True, exist_ok=True)
+            captured["episodes_per_shard"] = int(episodes_per_shard)
+
+        def write_episode(self, _episode: dict[str, Any]):
+            return None
+
+        def finalize(self):
+            return []
+
+    class _FakeEnv:
+        def __init__(self):
+            self.action_space = types.SimpleNamespace(shape=(4,))
+            self.render_mode = None
+
+        def set_task(self, _task):
+            return None
+
+        def close(self):
+            return None
+
+    class _FakeML1:
+        def __init__(self, task: str, seed: int):
+            del seed
+            self.train_classes = {task: _FakeEnv}
+            self.train_tasks = [object()]
+
+    monkeypatch.setitem(sys.modules, "metaworld", types.SimpleNamespace(ML1=_FakeML1))
+    monkeypatch.setattr(jepa_export, "_try_load_smolvla_exec", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(jepa_export, "_try_load_wm", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(jepa_export, "_enforce_export_quality_gates", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(jepa_export, "_promote_episode_shards", lambda _src, dst: Path(dst).mkdir(parents=True, exist_ok=True))
+    monkeypatch.setattr(jepa_export, "EpisodeShardWriter", _FakeWriter)
+    monkeypatch.setattr(
+        jepa_export,
+        "rollout_episode",
+        lambda *_args, **_kwargs: {
+            "meta": {"episode_index": 0},
+            "images": [np.zeros((4, 4, 3), dtype=np.uint8)],
+            "cem_plan": {"per_step": [{"latent_pred_dim": 256, "policy_source": "cem_mpc_wm", "planner_metadata": {}}]},
+        },
+    )
+    monkeypatch.setenv("SMOLVLA_JEPA_EXPORT_SKIP_WM", "1")
+    monkeypatch.setenv("SMOLVLA_JEPA_EXPORT_EPISODES_PER_SHARD", "5")
+
+    with tempfile.TemporaryDirectory() as td:
+        out_dir = Path(td) / "out"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "jepa_cem_paired_pushv3_export.py",
+                "--out",
+                str(out_dir),
+                "--episodes",
+                "1",
+                "--max-steps",
+                "1",
+                "--device",
+                "cpu",
+            ],
+        )
+        rc = jepa_export.main()
+
+        assert rc == 0
+        assert captured["episodes_per_shard"] == 5
+        manifest = json.loads((out_dir / "export_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["episodes_per_shard"] == 5
 
 
 class ExporterMemoryBoundedTests(unittest.TestCase):

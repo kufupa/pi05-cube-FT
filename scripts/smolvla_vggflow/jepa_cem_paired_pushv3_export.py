@@ -941,6 +941,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", default="push-v3")
     ap.add_argument("--episodes", type=int, default=8)
+    ap.add_argument(
+        "--episodes-per-shard",
+        type=int,
+        default=int(os.environ.get("SMOLVLA_JEPA_EXPORT_EPISODES_PER_SHARD", "1")),
+        help="Number of episodes buffered before shard flush (must be > 0).",
+    )
     ap.add_argument("--max-steps", type=int, default=200)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, required=True)
@@ -1012,6 +1018,8 @@ def main() -> int:
         help="Log RSS every N rollout steps (<=0 disables).",
     )
     args = ap.parse_args()
+    if int(args.episodes_per_shard) <= 0:
+        ap.error("--episodes-per-shard must be > 0")
     store_cem_plan_seq = _as_bool(args.store_cem_plan_seq)
     store_smolvla_action = _as_bool(args.store_smolvla_action)
     full_latents_export = _as_bool(args.full_latents_export)
@@ -1063,7 +1071,7 @@ def main() -> int:
     rng = np.random.default_rng(args.seed)
     episodes_dir = args.out / "episodes"
     staging_episodes_dir = args.out / f".episodes_staging_{uuid.uuid4().hex}"
-    episode_writer = EpisodeShardWriter(staging_episodes_dir, episodes_per_shard=1)
+    episode_writer = EpisodeShardWriter(staging_episodes_dir, episodes_per_shard=int(args.episodes_per_shard))
     metrics_acc = ExportQualityAccumulator()
     latent_pred_dim: int | None = None
     written_episode_files: list[Path] = []
@@ -1132,12 +1140,21 @@ def main() -> int:
         except Exception:
             pass
 
+    shard_files = sorted(
+        str(path.relative_to(args.out))
+        for path in written_episode_files
+        if path.is_file()
+    )
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "export_mode": EXPORT_MODE,
         "trajectories_file": "episodes",
         "trajectories_format": "pt_per_episode",
         "trajectories_glob": "episodes/episode_*.pt",
+        "episodes_per_shard": int(args.episodes_per_shard),
+        "shard_count": len(shard_files),
+        "shard_files": shard_files,
+        "complete_episodes": len(shard_files),
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
         "task_id": args.task,
         "jepa_ckpt": args.jepa_ckpt or _resolve_ckpt("jepa_wm_metaworld.pth.tar"),

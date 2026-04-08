@@ -66,7 +66,9 @@ Same `step_index` (or chunk alignment) as the executed arm for this `pair_key`.
 |-----|------|--------|
 | `schema_version` | string | Must match paired schema (e.g. `cem_paired_push_v3_v0`). |
 | `export_mode` | string | Must be **`cem_paired_push_v3`**. |
-| `trajectories_file` | string | Basename or relative path to the trajectory blob (e.g. `trajectories.pt`). |
+| `trajectories_file` | string | Primary payload root. Current contract uses `episodes` (directory of episode shards). |
+| `trajectories_format` | string | Current contract: `pt_per_episode`. |
+| `trajectories_glob` | string | Current contract: `episodes/episode_*.pt`. |
 | `created_at` | string | ISO-8601 timestamp. |
 | `task_id` | string | Expected task, e.g. `push-v3`. |
 | `jepa_ckpt` | string | Path or id of JEPA-WM weights used (audit). |
@@ -78,20 +80,20 @@ Same `step_index` (or chunk alignment) as the executed arm for this `pair_key`.
 
 ## Shard contract (memory-bounded export)
 
-When `--episodes-per-shard` is set, exporter output is contractually sharded.
+`--episodes-per-shard` controls flush cadence and is recorded in manifest metadata.
 
 | Key | Type | Notes |
 |-----|------|-------|
-| `episodes_per_shard` | int | Requested shard size (default `1` in phase07 wiring). |
-| `shard_count` | int | Number of completed shard payload files. |
+| `episodes_per_shard` | int | Requested flush cadence (default `1` in phase07 wiring). |
+| `shard_count` | int | Number of completed payload files under `episodes/`. |
 | `shard_files` | array[string] | Ordered list of payload files consumed by phase08. |
-| `complete_episodes` | int | Number of episodes fully materialized across shards. |
+| `complete_episodes` | int | Number of episodes fully materialized; currently equals `shard_count` (`pt_per_episode` format). |
 
 Bridge readers must treat `shard_files` as the source of truth when present, and preserve list order for deterministic replay and split assignment.
 
 ### Compact payload layout
 
-Each shard payload stores a compact episode list with paired records only (no duplicate full-run envelope per file):
+Each payload file currently stores a single compact episode dict with paired records:
 
 - Episode envelope: `pair_key`, `task_id`, `episode_index`
 - Executed arm: aligned step records with observation refs/payload, executed `action`, optional `reward`/`success`/`done`
