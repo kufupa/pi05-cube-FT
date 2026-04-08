@@ -8,6 +8,7 @@ import io
 import hashlib
 import json
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -44,6 +45,30 @@ def _safe_float(value: Any, default: float = 1.0) -> float:
         return float(value)
     except Exception:
         return default
+
+
+def _env_flag_int(value: Any, default: int = 1) -> int:
+    if value is None:
+        return int(default)
+    if isinstance(value, bool):
+        return 1 if value else 0
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return 1
+    if text in {"0", "false", "no", "n", "off"}:
+        return 0
+    try:
+        return 1 if int(float(text)) != 0 else 0
+    except Exception:
+        return int(default)
+
+
+def _resolve_wm_heavy_split_enabled_default() -> int:
+    # Planned name takes precedence, legacy alias remains supported.
+    raw = os.environ.get("SMOLVLA_BRIDGE_WM_HEAVY_SPLIT")
+    if raw is None:
+        raw = os.environ.get("SMOLVLA_BRIDGE_WM_HEAVY_SPLIT_ENABLED", "1")
+    return _env_flag_int(raw, 1)
 
 
 def _read_records(source: Path) -> List[Dict[str, Any]]:
@@ -688,6 +713,7 @@ def _write_root_meta_smolvla(
 
 
 def _normalize(record: Dict[str, Any]) -> Dict[str, Any]:
+    wm_score = _compute_wm_completeness_score(record)
     out = {
         "images": record.get("images", []),
         "state": record.get("state", []),
@@ -695,10 +721,12 @@ def _normalize(record: Dict[str, Any]) -> Dict[str, Any]:
         "language": record.get("language", ""),
         "done": bool(record.get("done", False)),
         "success": bool(record.get("success", False)),
+        "wm_completeness_score": wm_score,
         "meta": {k: v for k, v in record.items() if k not in REQUIRED_FIELDS},
     }
     confidence = _safe_float(record.get("confidence", record.get("meta", {}).get("confidence", 1.0)), 1.0)
     out["meta"]["confidence"] = confidence
+    out["meta"]["wm_completeness_score"] = wm_score
     return out
 
 
@@ -722,6 +750,161 @@ def _pair_key_hash(item: Dict[str, Any]) -> int:
     pk = meta.get("pair_key") or item.get("pair_key") or ""
     h = hashlib.sha256(str(pk).encode("utf-8")).hexdigest()[:12]
     return int(h, 16) % 1000
+
+
+def _extract_per_step_telemetry(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    plan = item.get("cem_plan")
+    if isinstance(plan, dict):
+        per_step = plan.get("per_step")
+        if isinstance(per_step, list):
+            return [step for step in per_step if isinstance(step, dict)]
+
+    meta = item.get("meta")
+    if isinstance(meta, dict):
+        meta_plan = meta.get("cem_plan")
+        if isinstance(meta_plan, dict):
+            per_step = meta_plan.get("per_step")
+            if isinstance(per_step, list):
+                return [step for step in per_step if isinstance(step, dict)]
+    return []
+
+
+def _step_has_cem_plan(step: Dict[str, Any]) -> bool:
+    if _safe_float(step.get("cem_iterations", 0), 0.0) > 0.0:
+        return True
+    seq = _coerce_list(step.get("action_wm_cem_plan_seq", []))
+    if len(seq) > 0:
+        return True
+    planner_metadata = step.get("planner_metadata")
+    if isinstance(planner_metadata, dict):
+        if "horizon" in planner_metadata or "population" in planner_metadata:
+            return True
+    return False
+
+
+def _step_has_latent(step: Dict[str, Any]) -> bool:
+    latents = _coerce_list(step.get("latent_pred", []))
+    return len(latents) > 0
+
+
+def _step_wm_success(step: Dict[str, Any]) -> bool:
+    planner_metadata = step.get("planner_metadata")
+    if not isinstance(planner_metadata, dict):
+        planner_metadata = {}
+    if planner_metadata.get("wm_skipped"):
+        return False
+    if planner_metadata.get("wm_step_error"):
+        return False
+    src = str(step.get("policy_source", "")).strip().lower()
+    if src == "cem_mpc_wm":
+        return True
+    return _step_has_cem_plan(step) or _step_has_latent(step)
+
+
+def _compute_wm_completeness_score(item: Dict[str, Any]) -> float:
+    per_step = _extract_per_step_telemetry(item)
+    if not per_step:
+        return 0.0
+
+    total = 0.0
+    for step in per_step:
+        wm_success = 1.0 if _step_wm_success(step) else 0.0
+        latent_present = 1.0 if _step_has_latent(step) else 0.0
+        plan_present = 1.0 if _step_has_cem_plan(step) else 0.0
+        total += (wm_success + latent_present + plan_present) / 3.0
+    return float(total / len(per_step))
+
+
+def _wm_completeness_from_item(item: Dict[str, Any]) -> float:
+    meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+    if "wm_completeness_score" in meta:
+        return _safe_float(meta.get("wm_completeness_score"), 0.0)
+    if "wm_completeness_score" in item:
+        return _safe_float(item.get("wm_completeness_score"), 0.0)
+    return _compute_wm_completeness_score(item)
+
+
+def _wm_split_tiebreak(item: Dict[str, Any], fallback_index: int) -> str:
+    meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+    pair_key = meta.get("pair_key") or item.get("pair_key") or ""
+    language = str(item.get("language", ""))
+    steps = len(_coerce_list(item.get("action_chunk", item.get("actions", []))))
+    digest_src = f"{pair_key}|{language}|{steps}|{fallback_index}"
+    return hashlib.sha256(digest_src.encode("utf-8")).hexdigest()
+
+
+def _mean_wm_completeness(records: List[Dict[str, Any]]) -> float:
+    if not records:
+        return 0.0
+    scores = [_wm_completeness_from_item(item) for item in records]
+    return float(sum(scores) / len(scores))
+
+
+def _split_wm_heavy(
+    records: List[Dict[str, Any]],
+    val_ratio: float,
+    score_margin: float,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, float]]:
+    if not records:
+        return [], [], {
+            "train_count": 0,
+            "val_count": 0,
+            "mean_score_train": 0.0,
+            "mean_score_val": 0.0,
+            "val_fraction": 0.0,
+            "score_margin": float(max(0.0, score_margin)),
+        }
+
+    ratio = 0.0 if val_ratio < 0.0 else 1.0 if val_ratio > 1.0 else float(val_ratio)
+    margin = float(max(0.0, score_margin))
+    ranked: List[Dict[str, Any]] = []
+    for idx, item in enumerate(records):
+        ranked.append(
+            {
+                "idx": idx,
+                "item": item,
+                "score": _wm_completeness_from_item(item),
+                "tiebreak": _wm_split_tiebreak(item, idx),
+            }
+        )
+    ranked.sort(key=lambda row: (-row["score"], row["tiebreak"], row["idx"]))
+
+    if ratio <= 0.0:
+        train = [row["item"] for row in ranked]
+        val: List[Dict[str, Any]] = []
+    elif ratio >= 1.0:
+        train = []
+        val = [row["item"] for row in ranked]
+    else:
+        n_total = len(ranked)
+        n_val = max(1, int(n_total * ratio))
+        if n_total > 1:
+            n_val = min(n_val, n_total - 1)
+        cutoff_score = ranked[n_val - 1]["score"]
+
+        hard_val_idx = {row["idx"] for row in ranked if row["score"] > cutoff_score + margin}
+        hard_train_idx = {row["idx"] for row in ranked if row["score"] < cutoff_score - margin}
+        border = [
+            row
+            for row in ranked
+            if row["idx"] not in hard_val_idx and row["idx"] not in hard_train_idx
+        ]
+        needed = max(0, n_val - len(hard_val_idx))
+        selected_val_idx = set(hard_val_idx)
+        selected_val_idx.update(row["idx"] for row in border[:needed])
+
+        val = [row["item"] for row in ranked if row["idx"] in selected_val_idx]
+        train = [row["item"] for row in ranked if row["idx"] not in selected_val_idx]
+
+    stats = {
+        "train_count": len(train),
+        "val_count": len(val),
+        "mean_score_train": _mean_wm_completeness(train),
+        "mean_score_val": _mean_wm_completeness(val),
+        "val_fraction": ratio,
+        "score_margin": margin,
+    }
+    return train, val, stats
 
 
 def _split_by_pair_key_hash(
@@ -779,6 +962,22 @@ def _write_placeholder_dataset(out_dir: Path) -> None:
                 "filtered_empty": 0,
                 "source_files": 0,
                 "empty_inputs": True,
+                "split_policy": {
+                    "name": "wm_heavy_top_fraction",
+                    "wm_heavy_enabled": True,
+                    "wm_heavy_jepa_fraction": 0.6,
+                    "wm_heavy_val_fraction": 0.6,
+                    "wm_score_margin": 0.0,
+                    "wm_heavy_score_margin": 0.0,
+                    "deterministic_tiebreaker": "sha256(pair_key|language|steps|index)",
+                },
+                "split_counts": {"train": 0, "val": 0},
+                "wm_completeness_mean": {"train": 0.0, "val": 0.0},
+                "wm_heavy_split_policy": "wm_heavy_top_fraction",
+                "mean_wm_score_train": 0.0,
+                "mean_wm_score_val": 0.0,
+                "n_train_episodes": 0,
+                "n_val_episodes": 0,
                 "quality_metrics": {
                     "image_nonblank_ratio": 0.0,
                     "heuristic_fallback_episode_ratio": 0.0,
@@ -917,11 +1116,47 @@ def _is_valid_record(item: Dict[str, Any], min_actions: int) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    wm_split_enabled_default = _resolve_wm_heavy_split_enabled_default()
+    wm_split_fraction_default = _safe_float(
+        os.environ.get(
+            "SMOLVLA_BRIDGE_WM_HEAVY_JEPA_FRACTION",
+            os.environ.get(
+                "SMOLVLA_BRIDGE_WM_HEAVY_VAL_FRACTION",
+                os.environ.get("SMOLVLA_BRIDGE_VAL_RATIO", "0.6"),
+            ),
+        ),
+        0.6,
+    )
+    wm_split_margin_default = _safe_float(
+        os.environ.get(
+            "SMOLVLA_BRIDGE_WM_SCORE_MARGIN",
+            os.environ.get("SMOLVLA_BRIDGE_WM_HEAVY_SCORE_MARGIN", "0.0"),
+        ),
+        0.0,
+    )
     parser.add_argument("--jepa-source", default="", help="JEPA trajectory export path")
     parser.add_argument("--out-dir", required=True, help="Output dataset root")
     parser.add_argument("--train-ratio", type=float, default=0.85)
     parser.add_argument("--min-confidence", type=float, default=0.0)
     parser.add_argument("--val-ratio", type=float, default=0.15)
+    parser.add_argument(
+        "--wm-heavy-split-enabled",
+        type=int,
+        default=wm_split_enabled_default,
+        help="When 1, split by wm_completeness_score top fraction into val (JEPA) root.",
+    )
+    parser.add_argument(
+        "--wm-heavy-val-fraction",
+        type=float,
+        default=wm_split_fraction_default,
+        help="Top fraction (by wm_completeness_score) assigned to val split when WM-heavy policy is enabled.",
+    )
+    parser.add_argument(
+        "--wm-heavy-score-margin",
+        type=float,
+        default=wm_split_margin_default,
+        help="Boundary margin around WM-heavy split cutoff score before deterministic tie-break resolution.",
+    )
     parser.add_argument("--max-train", type=int, default=0)
     parser.add_argument("--min-action-length", type=int, default=1)
     parser.add_argument("--min-image-coverage", type=float, default=0.95)
@@ -972,24 +1207,52 @@ def main() -> int:
         val_ratio = 1.0
     else:
         val_ratio = args.val_ratio
+    wm_heavy_split_enabled = bool(int(args.wm_heavy_split_enabled))
+    wm_heavy_val_fraction = (
+        0.0
+        if args.wm_heavy_val_fraction < 0
+        else 1.0
+        if args.wm_heavy_val_fraction > 1
+        else float(args.wm_heavy_val_fraction)
+    )
+    wm_heavy_score_margin = max(0.0, float(args.wm_heavy_score_margin))
 
     manifest_mode = None
     if args.jepa_source:
         manifest_mode = _read_manifest_export_mode(Path(args.jepa_source).expanduser().resolve())
-    if manifest_mode == "cem_paired_push_v3":
+    wm_split_stats = {
+        "train_count": 0,
+        "val_count": 0,
+        "mean_score_train": 0.0,
+        "mean_score_val": 0.0,
+        "val_fraction": wm_heavy_val_fraction if wm_heavy_split_enabled else val_ratio,
+        "score_margin": wm_heavy_score_margin if wm_heavy_split_enabled else 0.0,
+    }
+    if wm_heavy_split_enabled:
+        train, val, wm_split_stats = _split_wm_heavy(
+            filtered,
+            val_ratio=wm_heavy_val_fraction,
+            score_margin=wm_heavy_score_margin,
+        )
+    elif manifest_mode == "cem_paired_push_v3":
         train, val = _split_by_pair_key_hash(filtered, val_ratio)
     else:
         train, val = _split(filtered, val_ratio)
 
     if args.max_train > 0:
         cap = min(args.max_train, len(filtered))
+        effective_val_ratio = wm_heavy_val_fraction if wm_heavy_split_enabled else val_ratio
         train = train[:cap]
-        val = val[: max(1, int(len(filtered) * val_ratio))]
+        val = val[: max(1, int(len(filtered) * effective_val_ratio))]
     train = [item for item in train if _is_valid_record(item, args.min_action_length)]
     val = [item for item in val if _is_valid_record(item, args.min_action_length)]
+    wm_split_stats["train_count"] = len(train)
+    wm_split_stats["val_count"] = len(val)
+    wm_split_stats["mean_score_train"] = _mean_wm_completeness(train)
+    wm_split_stats["mean_score_val"] = _mean_wm_completeness(val)
 
     # Do not rebalance after deterministic pair_key split for cem_paired exports.
-    if args.train_ratio < 1.0 and manifest_mode != "cem_paired_push_v3":
+    if args.train_ratio < 1.0 and manifest_mode != "cem_paired_push_v3" and not wm_heavy_split_enabled:
         if len(train) > 0 and len(val) == 0:
             val_size = max(1, math.floor(len(train) * (1.0 - args.train_ratio)))
             move_n = min(len(train), val_size)
@@ -1025,7 +1288,14 @@ def main() -> int:
             print(f"[bridge] {exc}")
             return 1
     _write_root_meta_smolvla(out_dir, train, val, len(records))
-    split_method = "pair_key_hash" if manifest_mode == "cem_paired_push_v3" else "shuffle"
+    wm_split_stats["train_count"] = len(train)
+    wm_split_stats["val_count"] = len(val)
+    wm_split_stats["mean_score_train"] = _mean_wm_completeness(train)
+    wm_split_stats["mean_score_val"] = _mean_wm_completeness(val)
+    if wm_heavy_split_enabled:
+        split_method = "wm_heavy_top_fraction"
+    else:
+        split_method = "pair_key_hash" if manifest_mode == "cem_paired_push_v3" else "shuffle"
     summary = {
         "train_records": len(train),
         "val_records": len(val),
@@ -1037,6 +1307,28 @@ def main() -> int:
         "min_confidence": args.min_confidence,
         "min_action_length": args.min_action_length,
         "split_method": split_method,
+        "split_policy": {
+            "name": "wm_heavy_top_fraction" if wm_heavy_split_enabled else split_method,
+            "wm_heavy_enabled": wm_heavy_split_enabled,
+            "wm_heavy_jepa_fraction": float(wm_heavy_val_fraction),
+            "wm_heavy_val_fraction": float(wm_heavy_val_fraction),
+            "wm_score_margin": float(wm_heavy_score_margin),
+            "wm_heavy_score_margin": float(wm_heavy_score_margin),
+            "deterministic_tiebreaker": "sha256(pair_key|language|steps|index)",
+        },
+        "split_counts": {
+            "train": int(wm_split_stats.get("train_count", len(train))),
+            "val": int(wm_split_stats.get("val_count", len(val))),
+        },
+        "wm_completeness_mean": {
+            "train": float(wm_split_stats.get("mean_score_train", 0.0)),
+            "val": float(wm_split_stats.get("mean_score_val", 0.0)),
+        },
+        "wm_heavy_split_policy": "wm_heavy_top_fraction" if wm_heavy_split_enabled else split_method,
+        "mean_wm_score_train": float(wm_split_stats.get("mean_score_train", 0.0)),
+        "mean_wm_score_val": float(wm_split_stats.get("mean_score_val", 0.0)),
+        "n_train_episodes": int(wm_split_stats.get("train_count", len(train))),
+        "n_val_episodes": int(wm_split_stats.get("val_count", len(val))),
         "manifest_export_mode": manifest_mode,
         "lerobot_layout": "smolvla_metaworld_jadechoghari",
         "lerobot_codebase": "v3.0" if not args.no_convert_v30 else "v2.1",

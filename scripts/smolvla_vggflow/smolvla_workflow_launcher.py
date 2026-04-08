@@ -21,10 +21,10 @@ STAGE_SCRIPTS = [
     "stage02_baseline_pushv3_eval.slurm",
     "stage03_install_jepa_wms.slurm",
     "stage04_bridge_dataset_build.slurm",
-    "stage05_train_stageA_real_only.slurm",
     "stage06_train_stageB_jepa_mix.slurm",
     "stage07_vgg_gatecheck.slurm",
     "stage08_train_stageC_vgg_aux.slurm",
+    "stage05_train_stageA_real_only.slurm",
     "stage09_final_eval_and_bundle.slurm",
 ]
 
@@ -181,15 +181,16 @@ def submit_workflow_branch_parallel(map_out: Path | None) -> List[str]:
     j03 = submit_stage(s[stages[4]], j01b, requires_gpu=_stage_requires_gpu(stages[4]))
     j04 = submit_stage(s[stages[5]], j03, requires_gpu=_stage_requires_gpu(stages[5]))
     join_train = f"{j02}:{j04}"
-    j05 = submit_stage(s[stages[6]], join_train, requires_gpu=_stage_requires_gpu(stages[6]))
-    j06 = submit_stage(s[stages[7]], join_train, requires_gpu=_stage_requires_gpu(stages[7]))
-    j07 = submit_stage(s[stages[8]], j01b, requires_gpu=_stage_requires_gpu(stages[8]))
+    j06 = submit_stage(s[stages[6]], join_train, requires_gpu=_stage_requires_gpu(stages[6]))
+    j07 = submit_stage(s[stages[7]], j01b, requires_gpu=_stage_requires_gpu(stages[7]))
     join_c = f"{j07}:{j04}"
-    j08 = submit_stage(s[stages[9]], join_c, requires_gpu=_stage_requires_gpu(stages[9]))
+    j08 = submit_stage(s[stages[8]], join_c, requires_gpu=_stage_requires_gpu(stages[8]))
+    join_a = f"{j06}:{j08}"
+    j05 = submit_stage(s[stages[9]], join_a, requires_gpu=_stage_requires_gpu(stages[9]))
     join_final = f"{j05}:{j06}:{j08}"
     j09 = submit_stage(s[stages[10]], join_final, requires_gpu=_stage_requires_gpu(stages[10]))
 
-    ids_order = [j00, j01, j01b, j02, j03, j04, j05, j06, j07, j08, j09]
+    ids_order = [j00, j01, j01b, j02, j03, j04, j06, j07, j08, j05, j09]
     if map_out:
         rows = []
         for name, jid in zip(stages, ids_order):

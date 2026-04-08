@@ -1095,6 +1095,9 @@ if ! log_capture "Bridge conversion" bash -lc "python '${SMOLVLA_PIPE_ROOT}/brid
   --train-ratio '${SMOLVLA_BRIDGE_TRAIN_RATIO}' \
   --min-confidence '${SMOLVLA_BRIDGE_MIN_CONFIDENCE}' \
   --val-ratio '${SMOLVLA_BRIDGE_VAL_RATIO}' \
+  --wm-heavy-split-enabled '${SMOLVLA_BRIDGE_WM_HEAVY_SPLIT}' \
+  --wm-heavy-val-fraction '${SMOLVLA_BRIDGE_WM_HEAVY_JEPA_FRACTION}' \
+  --wm-heavy-score-margin '${SMOLVLA_BRIDGE_WM_SCORE_MARGIN}' \
   --min-action-length '${SMOLVLA_BRIDGE_MIN_ACTION_LEN}' \
   --min-image-coverage '${SMOLVLA_BRIDGE_MIN_IMAGE_COVERAGE}' \
   --max-heuristic-ratio '${SMOLVLA_BRIDGE_MAX_HEURISTIC_FALLBACK_RATIO}' \

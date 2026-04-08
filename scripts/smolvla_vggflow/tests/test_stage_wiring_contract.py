@@ -13,6 +13,15 @@ class StageWiringContractTests(unittest.TestCase):
         self.assertIn("--store-cem-plan-seq", text)
         self.assertIn("--store-smolvla-action", text)
 
+    def test_phase08_bridge_passes_wm_heavy_flags(self):
+        text = Path("scripts/smolvla_vggflow/run_stage.sh").read_text(encoding="utf-8")
+        self.assertIn("--wm-heavy-split-enabled '${SMOLVLA_BRIDGE_WM_HEAVY_SPLIT}'", text)
+        self.assertIn("--wm-heavy-val-fraction", text)
+        self.assertIn("--wm-heavy-score-margin", text)
+        self.assertIn("SMOLVLA_BRIDGE_WM_HEAVY_SPLIT", text)
+        self.assertIn("SMOLVLA_BRIDGE_WM_HEAVY_JEPA_FRACTION", text)
+        self.assertIn("SMOLVLA_BRIDGE_WM_SCORE_MARGIN", text)
+
     def test_config_defaults_strict_thresholds_and_full_latents(self):
         cfg = Path("scripts/smolvla_vggflow/config.sh").read_text(encoding="utf-8")
         self.assertIn("SMOLVLA_JEPA_EXPORT_MAX_WM_ERROR_RATE", cfg)
@@ -23,6 +32,13 @@ class StageWiringContractTests(unittest.TestCase):
         self.assertIn("SMOLVLA_JEPA_EXPORT_STORE_SMOLVLA_ACTION", cfg)
         self.assertIn("SMOLVLA_JEPA_EXPORT_FULL_LATENTS", cfg)
         self.assertIn('SMOLVLA_TRAIN_SAVE_STEPS="${SMOLVLA_TRAIN_SAVE_STEPS:-2000}"', cfg)
+        self.assertIn("SMOLVLA_BRIDGE_WM_HEAVY_SPLIT", cfg)
+        self.assertIn("SMOLVLA_BRIDGE_WM_HEAVY_SPLIT_ENABLED", cfg)
+        self.assertIn('SMOLVLA_BRIDGE_WM_HEAVY_SPLIT="${SMOLVLA_BRIDGE_WM_HEAVY_SPLIT:-${SMOLVLA_BRIDGE_WM_HEAVY_SPLIT_ENABLED:-1}}"', cfg)
+        self.assertIn('SMOLVLA_BRIDGE_WM_HEAVY_SPLIT_ENABLED="${SMOLVLA_BRIDGE_WM_HEAVY_SPLIT_ENABLED:-${SMOLVLA_BRIDGE_WM_HEAVY_SPLIT}}"', cfg)
+        self.assertIn("SMOLVLA_BRIDGE_WM_HEAVY_JEPA_FRACTION", cfg)
+        self.assertIn('SMOLVLA_BRIDGE_WM_HEAVY_JEPA_FRACTION="${SMOLVLA_BRIDGE_WM_HEAVY_JEPA_FRACTION:-${SMOLVLA_BRIDGE_WM_HEAVY_VAL_FRACTION:-0.60}}"', cfg)
+        self.assertIn("SMOLVLA_BRIDGE_WM_SCORE_MARGIN", cfg)
 
     def test_exporter_defines_storage_argparse_and_manifest_fields(self):
         exporter = Path("scripts/smolvla_vggflow/jepa_cem_paired_pushv3_export.py").read_text(encoding="utf-8")
