@@ -7,6 +7,7 @@ source "${SCRIPT_DIR}/config.sh"
 
 FAIL_COUNT=0
 PASS_COUNT=0
+WARN_COUNT=0
 
 CHECK_01_SLURM="CHECK_01_SLURM"
 CHECK_02_ENVS="CHECK_02_ENVS"
@@ -32,6 +33,12 @@ mark_fail() {
   local message="$1"
   FAIL_COUNT=$((FAIL_COUNT + 1))
   printf "  FAIL %s\n" "${message}" >&2
+}
+
+mark_warn() {
+  local message="$1"
+  WARN_COUNT=$((WARN_COUNT + 1))
+  printf "  WARN %s\n" "${message}"
 }
 
 require_cmd() {
@@ -110,7 +117,11 @@ check_02_envs() {
 
 check_03_cuda_render() {
   log_header "${CHECK_03_CUDA_RENDER}" "cuda and render backend prerequisites"
-  require_cmd nvidia-smi
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    mark_pass "command available: nvidia-smi"
+  else
+    mark_warn "nvidia-smi unavailable on submit host; GPU validation deferred to Slurm worker nodes"
+  fi
   require_cmd xvfb-run
 
   if [[ -x "${SMOLVLA_LEROBOT_ENV_DIR}/bin/python" ]]; then
@@ -121,7 +132,7 @@ PY
     then
       mark_pass "lerobot env reports torch.cuda.is_available()"
     else
-      mark_fail "lerobot env reports CUDA unavailable"
+      mark_warn "lerobot env reports CUDA unavailable on submit host; rely on Slurm GPU allocations"
     fi
   else
     mark_fail "cannot check CUDA without ${SMOLVLA_LEROBOT_ENV_DIR}/bin/python"
@@ -207,7 +218,7 @@ main() {
   check_06_export
   check_07_bridge
 
-  printf "\nsummary: %s passed, %s failed\n" "${PASS_COUNT}" "${FAIL_COUNT}"
+  printf "\nsummary: %s passed, %s warned, %s failed\n" "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}"
   if (( FAIL_COUNT > 0 )); then
     printf "result: FAIL\n" >&2
     return 1
