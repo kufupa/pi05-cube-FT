@@ -47,6 +47,9 @@ finally:
     else:
         sys.modules["torch"] = _original_torch_module
 
+if not hasattr(jepa_export.torch, "device"):
+    jepa_export.torch.device = lambda *_args, **_kwargs: "cpu"
+
 
 def test_encode_image_payload_returns_uint8_array():
     frame = np.random.default_rng(0).random((8, 8, 3), dtype=np.float32)
@@ -243,6 +246,142 @@ def test_rollout_enforces_rss_pre_and_post_step(monkeypatch):
     )
 
     assert calls == ["ep=7 step=0 pre_step", "ep=7 step=0 post_step"]
+
+
+def test_rollout_serialization_uses_compact_image_encoder(monkeypatch):
+    class _FakeEnv:
+        def __init__(self):
+            self.action_space = types.SimpleNamespace(shape=(4,))
+
+        def reset(self, seed=None):
+            del seed
+            return np.zeros(12, dtype=np.float32)
+
+        def render(self):
+            return np.ones((4, 4, 3), dtype=np.uint8) * 255
+
+        def step(self, action):
+            del action
+            return np.zeros(12, dtype=np.float32), 0.0, True, {"success": True}
+
+    sentinel_image = np.full((2, 2, 3), 17, dtype=np.uint8)
+    encode_calls: list[tuple[int, ...]] = []
+
+    def _encode_image_spy(image: Any) -> np.ndarray:
+        encode_calls.append(tuple(np.asarray(image).shape))
+        return sentinel_image
+
+    monkeypatch.setattr(jepa_export, "_encode_image_payload", _encode_image_spy)
+    monkeypatch.setattr(
+        jepa_export,
+        "_select_executed_action",
+        lambda **_kwargs: {"action_executed": [0.0, 0.0, 0.0, 0.0], "policy_source": "heuristic"},
+    )
+
+    episode = jepa_export.rollout_episode(
+        env=_FakeEnv(),
+        max_steps=1,
+        pair_key="pair-key",
+        wm_bundle=None,
+        smolvla_bundle=None,
+        task_text="push the puck to the goal",
+        cem_horizon=4,
+        cem_pop=8,
+        cem_iters=2,
+        execution_policy="cem_primary",
+        store_cem_plan_seq=True,
+        store_smolvla_action=True,
+        full_latents_export=False,
+        rng=np.random.default_rng(0),
+        max_rss_gb=0.0,
+        rss_log_interval_steps=0,
+        episode_index=0,
+    )
+
+    assert encode_calls
+    assert isinstance(episode["images"][0], np.ndarray)
+    np.testing.assert_array_equal(episode["images"][0], sentinel_image)
+
+
+def test_rollout_serialization_uses_compact_latent_encoder(monkeypatch):
+    class _FakeEnv:
+        def __init__(self):
+            self.action_space = types.SimpleNamespace(shape=(4,))
+
+        def reset(self, seed=None):
+            del seed
+            return np.zeros(12, dtype=np.float32)
+
+        def step(self, action):
+            del action
+            return np.zeros(12, dtype=np.float32), 0.0, True, {"success": True}
+
+    class _FakeLatent:
+        def to(self, _device):
+            return self
+
+    class _FakeModel:
+        def encode(self, _obs):
+            return _FakeLatent()
+
+    class _NoGrad:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+    monkeypatch.setattr(jepa_export.torch, "no_grad", lambda: _NoGrad(), raising=False)
+    monkeypatch.setattr(jepa_export, "_render_to_wm_visual", lambda *_args, **_kwargs: np.zeros((4, 4, 3), dtype=np.uint8))
+    monkeypatch.setattr(jepa_export, "_build_proprio", lambda *_args, **_kwargs: np.zeros((4,), dtype=np.float32))
+    monkeypatch.setattr(
+        jepa_export,
+        "cem_first_action",
+        lambda *_args, **_kwargs: (
+            np.zeros((4,), dtype=np.float32),
+            {
+                "meta": {"cem_iterations": 1, "cem_cost": 0.0, "cem_seed": 123},
+                "latent_pred": [float(i) for i in range(300)],
+                "latent_pred_dim": 300,
+            },
+        ),
+    )
+
+    latent_encode_calls: list[bool] = []
+
+    def _encode_latent_spy(latent_vec: Any, full_latents_export: bool) -> np.ndarray:
+        latent_encode_calls.append(bool(full_latents_export))
+        return np.asarray(latent_vec, dtype=np.float32)[:16]
+
+    monkeypatch.setattr(jepa_export, "_encode_latent_payload", _encode_latent_spy)
+
+    episode = jepa_export.rollout_episode(
+        env=_FakeEnv(),
+        max_steps=1,
+        pair_key="pair-key",
+        wm_bundle=(_FakeModel(), object(), 4, 4, "cpu"),
+        smolvla_bundle=None,
+        task_text="push the puck to the goal",
+        cem_horizon=4,
+        cem_pop=8,
+        cem_iters=2,
+        execution_policy="cem_primary",
+        store_cem_plan_seq=True,
+        store_smolvla_action=True,
+        full_latents_export=False,
+        rng=np.random.default_rng(0),
+        max_rss_gb=0.0,
+        rss_log_interval_steps=0,
+        episode_index=0,
+    )
+
+    per_step = episode["cem_plan"]["per_step"]
+    assert latent_encode_calls == [False]
+    assert per_step
+    assert not isinstance(per_step[0]["latent_pred"], list)
+    assert int(np.asarray(per_step[0]["latent_pred"]).size) == 16
+    assert int(per_step[0]["latent_pred_dim"]) == 300
 
 
 def test_main_cleans_up_and_closes_env_on_guard_failure(monkeypatch):

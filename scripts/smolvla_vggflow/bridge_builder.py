@@ -140,10 +140,6 @@ def _read_records_from_manifest(source: Path) -> List[Dict[str, Any]]:
         print(f"[bridge] manifest parse failed ({manifest_path}): {exc}")
         return _read_records(source)
 
-    trajectories_file = manifest_payload.get("trajectories_file")
-    if not isinstance(trajectories_file, str) or not trajectories_file.strip():
-        return _read_records(source)
-
     def _require_records(records: List[Dict[str, Any]], resolved_target: Path) -> List[Dict[str, Any]]:
         if records:
             return records
@@ -151,6 +147,58 @@ def _read_records_from_manifest(source: Path) -> List[Dict[str, Any]]:
             "manifest trajectories_file resolved to no records: "
             f"{resolved_target} (manifest={manifest_path})"
         )
+
+    shard_files = manifest_payload.get("shard_files")
+    if isinstance(shard_files, list) and len(shard_files) > 0:
+        if "shard_count" in manifest_payload:
+            try:
+                shard_count = int(manifest_payload.get("shard_count"))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"manifest shard_count is not an integer: {manifest_payload.get('shard_count')!r}"
+                ) from exc
+            if shard_count != len(shard_files):
+                raise RuntimeError(
+                    "manifest shard_count mismatch: "
+                    f"declared={shard_count} listed={len(shard_files)} (manifest={manifest_path})"
+                )
+
+        source_root = source.resolve()
+        resolved_shards: List[Path] = []
+        for idx, raw_shard in enumerate(shard_files):
+            if not isinstance(raw_shard, str) or not raw_shard.strip():
+                raise RuntimeError(
+                    f"manifest shard_files[{idx}] must be a non-empty string (manifest={manifest_path})"
+                )
+            shard_rel = Path(raw_shard.strip()).expanduser()
+            if shard_rel.is_absolute():
+                raise RuntimeError(
+                    f"manifest shard_files[{idx}] must be relative to source: {raw_shard!r} "
+                    f"(manifest={manifest_path})"
+                )
+            shard_path = (source / shard_rel).resolve()
+            try:
+                shard_path.relative_to(source_root)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"manifest shard_files[{idx}] escapes source root: {raw_shard!r} "
+                    f"(source={source_root}, manifest={manifest_path})"
+                ) from exc
+            if not shard_path.is_file():
+                raise RuntimeError(
+                    f"manifest shard file missing: {shard_path} "
+                    f"(entry={raw_shard!r}, manifest={manifest_path})"
+                )
+            resolved_shards.append(shard_path)
+
+        records: List[Dict[str, Any]] = []
+        for shard in resolved_shards:
+            records.extend(_read_records(shard))
+        return _require_records(records, source / "shard_files[]")
+
+    trajectories_file = manifest_payload.get("trajectories_file")
+    if not isinstance(trajectories_file, str) or not trajectories_file.strip():
+        return _read_records(source)
 
     raw_target = Path(trajectories_file.strip()).expanduser()
     target = raw_target if raw_target.is_absolute() else (source / raw_target)

@@ -733,7 +733,7 @@ def cem_first_action(
         "cem_population": pop_size,
     }
     a0 = best_seq[0].detach().cpu().numpy().reshape(-1)
-    latent_summary: list[float] = []
+    latent_summary: Any = []
     latent_pred_dim = 0
     if best_z_pred is not None:
         try:
@@ -742,12 +742,11 @@ def cem_first_action(
             else:
                 lat = best_z_pred
             if torch.is_tensor(lat):
-                latent_vec = lat.detach().float().cpu().reshape(-1)
-                latent_pred_dim = int(latent_vec.numel())
-                if full_latents_export:
-                    latent_summary = latent_vec.tolist()
-                else:
-                    latent_summary = latent_vec[:256].tolist()
+                latent_pred_dim = int(lat.detach().reshape(-1).numel())
+            else:
+                latent_pred_dim = int(np.asarray(lat).reshape(-1).size)
+            if latent_pred_dim > 0:
+                latent_summary = _encode_latent_payload(lat, full_latents_export=full_latents_export)
         except Exception:
             pass
     return a0, {"meta": meta, "latent_pred": latent_summary, "latent_pred_dim": latent_pred_dim}
@@ -809,7 +808,7 @@ def rollout_episode(
         _enforce_rss_limit(max_rss_gb=max_rss_gb, context=f"{rss_context} pre_step")
 
         try:
-            images.append(_to_rgb_list(_collect_step_image(obs, env)))
+            images.append(_encode_image_payload(_collect_step_image(obs, env)))
         except Exception:
             pass
         st = _flatten_obs_state(obs)
@@ -862,7 +861,10 @@ def rollout_episode(
                         "cem_iterations": cem_dbg["meta"]["cem_iterations"],
                         "cem_cost": cem_dbg["meta"]["cem_cost"],
                         "cem_seed": cem_dbg["meta"]["cem_seed"],
-                        "latent_pred": cem_dbg["latent_pred"],
+                        "latent_pred": _encode_latent_payload(
+                            cem_dbg.get("latent_pred", []),
+                            full_latents_export=full_latents_export,
+                        ),
                         "latent_pred_dim": int(cem_dbg.get("latent_pred_dim", 0)),
                         "planner_metadata": meta,
                     }

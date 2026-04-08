@@ -89,6 +89,91 @@ class BridgeQualityGateTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].get("language"), "pt-shard")
 
+    def test_bridge_manifest_shard_files_preserve_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            episodes_dir = root / "episodes"
+            episodes_dir.mkdir(parents=True, exist_ok=True)
+            (episodes_dir / "shard_a.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "images": [[[0, 0, 0]]],
+                            "state": [[0.0, 0.0, 0.0, 0.0]],
+                            "actions": [[0.0, 0.0, 0.0, 0.0]],
+                            "language": "a",
+                            "done": True,
+                            "success": True,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (episodes_dir / "shard_b.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "images": [[[0, 0, 0]]],
+                            "state": [[0.0, 0.0, 0.0, 0.0]],
+                            "actions": [[0.0, 0.0, 0.0, 0.0]],
+                            "language": "b",
+                            "done": True,
+                            "success": True,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (root / "export_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "export_mode": "cem_paired_push_v3",
+                        "trajectories_file": "episodes",
+                        "shard_count": 2,
+                        "shard_files": ["episodes/shard_b.json", "episodes/shard_a.json"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            records = bridge_builder._read_records_from_manifest(root)
+            self.assertEqual([item.get("language") for item in records], ["b", "a"])
+
+    def test_bridge_manifest_shard_files_missing_entry_fails_fast(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            episodes_dir = root / "episodes"
+            episodes_dir.mkdir(parents=True, exist_ok=True)
+            (episodes_dir / "shard_0001.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "images": [[[0, 0, 0]]],
+                            "state": [[0.0, 0.0, 0.0, 0.0]],
+                            "actions": [[0.0, 0.0, 0.0, 0.0]],
+                            "language": "present",
+                            "done": True,
+                            "success": True,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (root / "export_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "export_mode": "cem_paired_push_v3",
+                        "trajectories_file": "episodes",
+                        "shard_count": 2,
+                        "shard_files": ["episodes/shard_0001.json", "episodes/shard_0002.json"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(RuntimeError):
+                bridge_builder._read_records_from_manifest(root)
+
     def test_bridge_manifest_target_without_records_fails_fast_in_main(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "src"
