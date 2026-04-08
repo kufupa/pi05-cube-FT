@@ -69,6 +69,55 @@ def _find_image(obs: Any) -> Any:
     return None
 
 
+def _as_contiguous_rgb_uint8(arr: Any) -> np.ndarray:
+    x = np.asarray(arr)
+    if x.ndim != 3 or x.shape[-1] not in (3, 4):
+        raise RuntimeError("bad image shape")
+    if x.shape[-1] == 4:
+        x = x[..., :3]
+    if x.dtype != np.uint8:
+        if np.issubdtype(x.dtype, np.floating) and float(np.max(x)) <= 1.5:
+            x = (np.clip(x, 0.0, 1.0) * 255.0).astype(np.uint8)
+        else:
+            x = np.clip(x, 0, 255).astype(np.uint8)
+    return np.ascontiguousarray(x)
+
+
+def _collect_step_image(obs: Any, env: Any) -> np.ndarray:
+    img = _find_image(obs)
+    if img is None:
+        img = env.render()
+    return _as_contiguous_rgb_uint8(img)
+
+
+def _clip_action_to_env(action: np.ndarray, env_action_dim: int) -> np.ndarray:
+    return np.clip(
+        np.asarray(action, dtype=np.float32).reshape(-1)[:env_action_dim],
+        -1.0,
+        1.0,
+    ).astype(np.float32)
+
+
+def _select_executed_action(
+    *,
+    obs: Any,
+    env: Any,
+    action_wm_cem_first: np.ndarray | None,
+    action_smolvla_raw: np.ndarray | None,
+    env_action_dim: int,
+    wm_available: bool,
+) -> dict[str, Any]:
+    if action_wm_cem_first is not None:
+        a = _clip_action_to_env(action_wm_cem_first, env_action_dim)
+        return {"action_executed": a.tolist(), "policy_source": "cem_mpc_wm"}
+    if action_smolvla_raw is not None:
+        a = _clip_action_to_env(action_smolvla_raw, env_action_dim)
+        return {"action_executed": a.tolist(), "policy_source": "smolvla"}
+    a = _clip_action_to_env(heuristic_push_action(obs, env), env_action_dim)
+    source = "heuristic_fallback" if wm_available else "heuristic"
+    return {"action_executed": a.tolist(), "policy_source": source}
+
+
 def _patch_external_datasets() -> None:
     """Avoid local ``lerobot.datasets`` shadowing HuggingFace ``datasets`` when importing policies."""
     for item in site.getsitepackages() + [site.getusersitepackages() or ""]:
@@ -232,26 +281,7 @@ def _vectors_for_smolvla(flat: np.ndarray, agent_dim: int, env_dim: int) -> tupl
 
 
 def _policy_rgb_hwc(env: Any, obs: Any) -> np.ndarray:
-    img = None
-    if isinstance(obs, dict):
-        raw_img = _find_image(obs)
-        if raw_img is not None:
-            img = np.asarray(raw_img)
-    if img is None:
-        frame = env.render()
-        if frame is None:
-            raise RuntimeError("no camera frame")
-        img = np.asarray(frame)
-    if img.ndim != 3 or img.shape[-1] not in (3, 4):
-        raise RuntimeError("bad image shape")
-    if img.shape[-1] == 4:
-        img = img[..., :3]
-    if img.dtype != np.uint8:
-        if float(np.max(img)) <= 1.5:
-            img = (np.clip(img, 0.0, 1.0) * 255.0).astype(np.uint8)
-        else:
-            img = np.clip(img, 0, 255).astype(np.uint8)
-    return img
+    return _collect_step_image(obs, env)
 
 
 def _smolvla_exec_action(
@@ -320,26 +350,11 @@ def _render_to_wm_visual(env: Any, obs: Any, device: torch.device) -> torch.Tens
 
     Prefer pixels already in ``obs`` (avoids an extra ``env.render()`` when available).
     """
-    frame = None
-    if isinstance(obs, dict):
-        raw = _find_image(obs)
-        if raw is not None:
-            frame = np.asarray(raw)
-    if frame is None:
-        try:
-            frame = env.render()
-        except Exception:
-            return None
-    if frame is None:
+    try:
+        arr = _collect_step_image(obs, env)
+    except Exception:
         return None
-    arr = np.asarray(frame)
-    if arr.ndim != 3 or arr.shape[-1] not in (3, 4):
-        return None
-    if arr.shape[-1] == 4:
-        arr = arr[..., :3]
-    t = torch.from_numpy(arr).float()
-    if t.max() > 1.5:
-        t = t / 255.0
+    t = torch.from_numpy(arr).float() / 255.0
     t = t.permute(2, 0, 1).unsqueeze(0)  # 1,3,H,W
     t = torch.nn.functional.interpolate(t, size=(256, 256), mode="bilinear", align_corners=False)
     return t.unsqueeze(0).to(device)  # 1,1,3,256,256
@@ -525,9 +540,10 @@ def rollout_episode(
     policy_used = "heuristic"
 
     for step_idx in range(max_steps):
-        img = _find_image(obs)
-        if img is not None:
-            images.append(_to_rgb_list(img))
+        try:
+            images.append(_to_rgb_list(_collect_step_image(obs, env)))
+        except Exception:
+            pass
         st = _flatten_obs_state(obs)
         states.append(st)
 
@@ -587,31 +603,27 @@ def rollout_episode(
         elif wm_bundle is None:
             step_record["planner_metadata"] = {"wm_skipped": True}
 
-        a_exec: np.ndarray | None = None
-        policy_used = "heuristic"
+        a_smolvla: np.ndarray | None = None
         if smolvla_bundle is not None:
             try:
                 raw_act = _smolvla_exec_action(smolvla_bundle, obs, env, task_text)
-                a_exec = np.clip(
-                    raw_act.reshape(-1)[:env_action_dim],
-                    -1.0,
-                    1.0,
-                ).astype(np.float32)
-                policy_used = "smolvla"
+                a_smolvla = np.asarray(raw_act, dtype=np.float32).reshape(-1)
             except Exception as exc:
                 meta = dict(step_record.get("planner_metadata") or {})
                 meta["policy_exec_error"] = str(exc)[:200]
                 step_record["planner_metadata"] = meta
 
-        if a_exec is None:
-            if a_cem is not None:
-                a_exec = np.clip(
-                    a_cem.reshape(-1)[:env_action_dim], -1.0, 1.0
-                ).astype(np.float32)
-                policy_used = "cem_mpc_wm"
-            else:
-                a_exec = heuristic_push_action(obs, env)
-                policy_used = "heuristic_fallback" if model is not None else "heuristic"
+        action_pick = _select_executed_action(
+            obs=obs,
+            env=env,
+            action_wm_cem_first=a_cem,
+            action_smolvla_raw=a_smolvla,
+            env_action_dim=env_action_dim,
+            wm_available=model is not None,
+        )
+        a_exec = np.asarray(action_pick["action_executed"], dtype=np.float32).reshape(-1)
+        policy_used = str(action_pick["policy_source"])
+        step_record["policy_source"] = policy_used
 
         a_list = np.asarray(a_exec, dtype=np.float32).reshape(-1).tolist()
         actions.append(a_list)
