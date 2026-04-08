@@ -60,6 +60,87 @@ class BridgeQualityGateTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].get("language"), "push")
 
+    def test_bridge_reads_manifest_trajectories_file_for_pt_shards(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "episodes_0001.pt").write_bytes(b"placeholder")
+            (root / "export_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "export_mode": "cem_paired_push_v3",
+                        "trajectories_file": "episodes",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            torch_stub = types.ModuleType("torch")
+            torch_stub.load = lambda *args, **kwargs: [
+                {
+                    "images": [[[0, 0, 0]]],
+                    "state": [[0.0, 0.0, 0.0, 0.0]],
+                    "actions": [[0.0, 0.0, 0.0, 0.0]],
+                    "language": "pt-shard",
+                    "done": True,
+                    "success": True,
+                }
+            ]
+            with mock.patch.dict(sys.modules, {"torch": torch_stub}):
+                records = bridge_builder._read_records_from_manifest(root)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].get("language"), "pt-shard")
+
+    def test_bridge_manifest_target_without_records_fails_fast_in_main(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "src"
+            root.mkdir(parents=True, exist_ok=True)
+            (root / "export_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "export_mode": "cem_paired_push_v3",
+                        "trajectories_file": "episodes",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            out_dir = Path(tmp) / "bridge"
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "bridge_builder.py",
+                    "--jepa-source",
+                    str(root),
+                    "--out-dir",
+                    str(out_dir),
+                ],
+            ):
+                rc = bridge_builder.main()
+            self.assertNotEqual(rc, 0)
+            self.assertFalse((out_dir / "bridge_summary.json").exists())
+
+    def test_split_manifest_preview_schema(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "manifest.json"
+            records = []
+            for i in range(12):
+                records.append(
+                    {
+                        "meta": {"pair_key": f"pair-{i}"},
+                        "action_chunk": [[0.0, 0.0, 0.0, 0.0] for _ in range(i + 1)],
+                    }
+                )
+            bridge_builder._write_split_manifest_preview(out, records)
+            payload = json.loads(out.read_text(encoding="utf-8"))
+            self.assertEqual(
+                set(payload.keys()),
+                {"record_count", "sample_pair_keys", "sample_step_counts"},
+            )
+            self.assertEqual(payload["record_count"], 12)
+            self.assertEqual(len(payload["sample_pair_keys"]), 10)
+            self.assertEqual(len(payload["sample_step_counts"]), 10)
+            self.assertEqual(payload["sample_pair_keys"][0], "pair-0")
+            self.assertEqual(payload["sample_step_counts"][0], 1)
+
     def test_blank_images_are_rejected(self):
         metrics = {
             "image_nonblank_ratio": 0.0,

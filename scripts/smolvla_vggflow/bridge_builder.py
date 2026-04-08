@@ -144,10 +144,18 @@ def _read_records_from_manifest(source: Path) -> List[Dict[str, Any]]:
     if not isinstance(trajectories_file, str) or not trajectories_file.strip():
         return _read_records(source)
 
+    def _require_records(records: List[Dict[str, Any]], resolved_target: Path) -> List[Dict[str, Any]]:
+        if records:
+            return records
+        raise RuntimeError(
+            "manifest trajectories_file resolved to no records: "
+            f"{resolved_target} (manifest={manifest_path})"
+        )
+
     raw_target = Path(trajectories_file.strip()).expanduser()
     target = raw_target if raw_target.is_absolute() else (source / raw_target)
     if target.exists():
-        return _read_records(target)
+        return _require_records(_read_records(target), target)
 
     # Allow concise manifest targets like "episodes" to resolve to known payload files.
     if target.suffix == "":
@@ -155,10 +163,10 @@ def _read_records_from_manifest(source: Path) -> List[Dict[str, Any]]:
         for ext in ext_candidates:
             candidate = target.with_suffix(ext)
             if candidate.is_file():
-                return _read_records(candidate)
+                return _require_records(_read_records(candidate), candidate)
         pth_tar_candidate = target.with_name(f"{target.name}.pth.tar")
         if pth_tar_candidate.is_file():
-            return _read_records(pth_tar_candidate)
+            return _require_records(_read_records(pth_tar_candidate), pth_tar_candidate)
 
         parent = target.parent
         if parent.is_dir():
@@ -175,9 +183,9 @@ def _read_records_from_manifest(source: Path) -> List[Dict[str, Any]]:
                 records: List[Dict[str, Any]] = []
                 for shard in shard_files:
                     records.extend(_read_records(shard))
-                return records
+                return _require_records(records, target)
 
-    return _read_records(target)
+    return _require_records(_read_records(target), target)
 
 
 def _looks_like_model_checkpoint(payload: Any) -> bool:
@@ -1293,7 +1301,11 @@ def main() -> int:
         if source.is_file():
             records.extend(_read_py_records(source))
         elif source.is_dir():
-            records.extend(_read_records_from_manifest(source))
+            try:
+                records.extend(_read_records_from_manifest(source))
+            except RuntimeError as exc:
+                print(f"[bridge] {exc}")
+                return 1
 
     if not records:
         print("[bridge] no source files found; writing empty placeholders")
