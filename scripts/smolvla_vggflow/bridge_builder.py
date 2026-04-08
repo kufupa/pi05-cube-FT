@@ -148,8 +148,14 @@ def _read_records_from_manifest(source: Path) -> List[Dict[str, Any]]:
             f"{resolved_target} (manifest={manifest_path})"
         )
 
-    shard_files = manifest_payload.get("shard_files")
-    if isinstance(shard_files, list) and len(shard_files) > 0:
+    if "shard_files" in manifest_payload:
+        shard_files = manifest_payload.get("shard_files")
+        if not isinstance(shard_files, list) or len(shard_files) <= 0:
+            raise RuntimeError(
+                "manifest shard_files must be a non-empty list of strings "
+                f"(manifest={manifest_path})"
+            )
+
         if "shard_count" in manifest_payload:
             try:
                 shard_count = int(manifest_payload.get("shard_count"))
