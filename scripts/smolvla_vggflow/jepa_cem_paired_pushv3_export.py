@@ -20,6 +20,7 @@ import argparse
 import importlib.util
 import json
 import os
+import resource
 import shutil
 import site
 import sys
@@ -187,6 +188,36 @@ def _enforce_export_quality_gates(
             "heuristic_fallback_episode_ratio above threshold: "
             f"{heuristic_ratio:.4f} > {max_heuristic_ratio:.4f}"
         )
+
+
+def _current_rss_gb() -> float:
+    """Best-effort current process RSS in GiB."""
+    try:
+        statm = Path("/proc/self/statm")
+        if statm.exists():
+            parts = statm.read_text(encoding="utf-8").strip().split()
+            if len(parts) >= 2:
+                rss_pages = int(parts[1])
+                page_size = int(os.sysconf("SC_PAGE_SIZE"))
+                return float(rss_pages * page_size) / float(1024**3)
+    except Exception:
+        pass
+    try:
+        rss = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        if sys.platform != "darwin":
+            rss *= 1024.0
+        return rss / float(1024**3)
+    except Exception:
+        return 0.0
+
+
+def _enforce_rss_limit(max_rss_gb: float, context: str) -> None:
+    limit = float(max_rss_gb)
+    if limit <= 0.0:
+        return
+    rss_gb = _current_rss_gb()
+    if rss_gb > limit:
+        raise RuntimeError(f"rss_gb above threshold at {context}: {rss_gb:.3f} > {limit:.3f}")
 
 
 def _to_rgb_list(arr: Any) -> list[list[list[float]]]:
@@ -737,6 +768,9 @@ def rollout_episode(
     store_smolvla_action: bool,
     full_latents_export: bool,
     rng: np.random.Generator,
+    max_rss_gb: float = 0.0,
+    rss_log_interval_steps: int = 0,
+    episode_index: int | None = None,
 ) -> dict[str, Any]:
     seed = int(rng.integers(0, 2**31 - 1))
     try:
@@ -769,6 +803,11 @@ def rollout_episode(
     policy_used = "heuristic"
 
     for step_idx in range(max_steps):
+        rss_context = f"ep={episode_index if episode_index is not None else '?'} step={step_idx}"
+        if int(rss_log_interval_steps) > 0 and (step_idx % int(rss_log_interval_steps) == 0):
+            print(f"[cem_paired_export][rss] {rss_context} rss_gb={_current_rss_gb():.3f}")
+        _enforce_rss_limit(max_rss_gb=max_rss_gb, context=rss_context)
+
         try:
             images.append(_to_rgb_list(_collect_step_image(obs, env)))
         except Exception:
@@ -959,6 +998,18 @@ def main() -> int:
         default=os.environ.get("SMOLVLA_INIT_CHECKPOINT", ""),
         help="SmolVLA HF id or local dir; empty disables. Default: $SMOLVLA_INIT_CHECKPOINT.",
     )
+    ap.add_argument(
+        "--max-rss-gb",
+        type=float,
+        default=float(os.environ.get("SMOLVLA_JEPA_EXPORT_MAX_RSS_GB", "0")),
+        help="Abort rollout when process RSS exceeds this GiB limit (0 disables).",
+    )
+    ap.add_argument(
+        "--rss-log-interval-steps",
+        type=int,
+        default=int(os.environ.get("SMOLVLA_JEPA_EXPORT_RSS_LOG_INTERVAL_STEPS", "25")),
+        help="Log RSS every N rollout steps (<=0 disables).",
+    )
     args = ap.parse_args()
     store_cem_plan_seq = _as_bool(args.store_cem_plan_seq)
     store_smolvla_action = _as_bool(args.store_smolvla_action)
@@ -1031,6 +1082,9 @@ def main() -> int:
             store_smolvla_action,
             full_latents_export,
             rng,
+            max_rss_gb=float(args.max_rss_gb),
+            rss_log_interval_steps=int(args.rss_log_interval_steps),
+            episode_index=ep,
         )
         episode_writer.write_episode(episode)
         metrics_acc.update(episode)

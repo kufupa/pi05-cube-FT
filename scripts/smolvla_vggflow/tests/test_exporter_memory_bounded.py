@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 def _build_torch_import_stub() -> types.ModuleType:
@@ -171,6 +172,12 @@ def test_cleanup_episode_shards_is_idempotent():
         assert not staging_dir.exists()
         jepa_export._cleanup_episode_shards(staging_dir)
         assert not staging_dir.exists()
+
+
+def test_rss_guard_raises_when_limit_exceeded(monkeypatch):
+    monkeypatch.setattr(jepa_export, "_current_rss_gb", lambda: 12.5)
+    with pytest.raises(RuntimeError):
+        jepa_export._enforce_rss_limit(max_rss_gb=10.0, context="ep=0 step=0")
 
 
 class ExporterMemoryBoundedTests(unittest.TestCase):
