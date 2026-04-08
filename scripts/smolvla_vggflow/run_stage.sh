@@ -1032,6 +1032,7 @@ PY
           '${SMOLVLA_LEROBOT_ENV_DIR}/bin/python' '${SMOLVLA_PIPE_ROOT}/jepa_cem_paired_pushv3_export.py' \
             --task '${SMOLVLA_JEPA_TASK}' \
             --episodes '${SMOLVLA_JEPA_EXPORT_EPISODES}' \
+            --episodes-per-shard '${SMOLVLA_JEPA_EXPORT_EPISODES_PER_SHARD}' \
             --max-steps '${SMOLVLA_JEPA_EXPORT_MAX_STEPS}' \
             --seed '${SMOLVLA_JEPA_EXPORT_SEED}' \
             --out '${SMOLVLA_JEPA_EXPORT_OUT}' \
@@ -1046,6 +1047,8 @@ PY
             --execution-policy '${SMOLVLA_JEPA_EXPORT_EXECUTION_POLICY}' \
             --max-wm-error-rate '${SMOLVLA_JEPA_EXPORT_MAX_WM_ERROR_RATE}' \
             --max-policy-error-rate '${SMOLVLA_JEPA_EXPORT_MAX_POLICY_ERROR_RATE}' \
+            --max-rss-gb '${SMOLVLA_JEPA_EXPORT_MAX_RSS_GB}' \
+            --rss-log-interval-steps '${SMOLVLA_JEPA_EXPORT_RSS_LOG_INTERVAL_STEPS}' \
             --require-images '${SMOLVLA_JEPA_EXPORT_REQUIRE_IMAGES}' \
             --store-cem-plan-seq '${SMOLVLA_JEPA_EXPORT_STORE_CEM_PLAN_SEQ}' \
             --store-smolvla-action '${SMOLVLA_JEPA_EXPORT_STORE_SMOLVLA_ACTION}'

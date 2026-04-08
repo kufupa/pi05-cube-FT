@@ -93,6 +93,32 @@ bash scripts/smolvla_vggflow/watch_workflow.sh \
 Expected sequencing in branch-parallel mode: `stage02 || stage03`, then bridge/gate prerequisites, then `stage06 || stage08`, then `stage05`, then `stage09`.
 This sequence is the recovery **target behavior**; it depends on the Task 6 launcher DAG patch and should be treated as intended ordering until that patch lands.
 
+## Phase07 memory-bounded exporter (shards + RSS guard)
+
+Use these controls when phase07 export size is large or a node has tight memory limits:
+
+```bash
+export SMOLVLA_JEPA_EXPORT_EPISODES_PER_SHARD=1
+export SMOLVLA_JEPA_EXPORT_MAX_RSS_GB=0
+export SMOLVLA_JEPA_EXPORT_RSS_LOG_INTERVAL_STEPS=25
+```
+
+- `SMOLVLA_JEPA_EXPORT_EPISODES_PER_SHARD`: flush cadence for compact shard payloads (`1` keeps per-episode shard isolation and bounded working set).
+- `SMOLVLA_JEPA_EXPORT_MAX_RSS_GB`: hard RSS cap (`0` disables the cap while retaining periodic logging).
+- `SMOLVLA_JEPA_EXPORT_RSS_LOG_INTERVAL_STEPS`: cadence for exporter RSS telemetry in long rollouts.
+
+### Resume procedure (after partial phase07 export)
+
+1. Keep `SMOLVLA_JEPA_EXPORT_OUT` and `SMOLVLA_RUN_SCOPE_ID` unchanged from the interrupted run.
+2. Ensure `SMOLVLA_JEPA_SOURCE="${SMOLVLA_JEPA_EXPORT_OUT}"`.
+3. Re-run phase07 with the same shard settings:
+
+```bash
+bash scripts/smolvla_vggflow/run_stage.sh 7
+```
+
+4. When resuming in-place, do **not** enable strict overwrite guard for phase07 (`SMOLVLA_FAIL_ON_PATH_REUSE=0` for the resume attempt), otherwise existing export artifacts are intentionally blocked.
+
 ## Stage map
 
 ```text
@@ -124,7 +150,7 @@ scripts/slurm/stage11_slurm_orchestration.slurm -> phase11_slurm_orchestration (
   `tensorboard` is ignored.
 - `SMOLVLA_JEPA_SOURCE`: path to JEPA trajectory artifacts (directory or file). Model-only checkpoints
   like `*.pth.tar` are not trajectory datasets and are intentionally skipped.
-- `SMOLVLA_JEPA_EXPORT_ENABLED`, `SMOLVLA_JEPA_EXPORT_OUT`, `SMOLVLA_JEPA_EXPORT_EPISODES`, `SMOLVLA_JEPA_EXPORT_MAX_STEPS`, `SMOLVLA_JEPA_EXPORT_SEED`, `SMOLVLA_JEPA_CEM_*`: phase07 runs `jepa_cem_paired_pushv3_export.py` (paired CEM + WM + push-v3 → `trajectories.pt`) when enabled. Legacy `jepa_metaworld_rollout_export.py` is unused.
+- `SMOLVLA_JEPA_EXPORT_ENABLED`, `SMOLVLA_JEPA_EXPORT_OUT`, `SMOLVLA_JEPA_EXPORT_EPISODES`, `SMOLVLA_JEPA_EXPORT_EPISODES_PER_SHARD`, `SMOLVLA_JEPA_EXPORT_MAX_RSS_GB`, `SMOLVLA_JEPA_EXPORT_RSS_LOG_INTERVAL_STEPS`, `SMOLVLA_JEPA_EXPORT_MAX_STEPS`, `SMOLVLA_JEPA_EXPORT_SEED`, `SMOLVLA_JEPA_CEM_*`: phase07 runs `jepa_cem_paired_pushv3_export.py` (paired CEM + WM + push-v3 export, sharded when configured) when enabled. Legacy `jepa_metaworld_rollout_export.py` is unused.
 - `SMOLVLA_CHECKPOINT_POLICY` (default `base_init_compare`), `SMOLVLA_RUN_SCOPE_ID`, `SMOLVLA_FAIL_ON_PATH_REUSE`, `SMOLVLA_FINAL_EVAL_CHECKPOINT`
 - `phase08_bridge_design` now hard-fails if `SMOLVLA_JEPA_SOURCE` yields zero trajectory-like inputs
   (instead of writing empty placeholder datasets), which keeps stage10 from starting on invalid bridge data.

@@ -57,7 +57,7 @@ Same `step_index` (or chunk alignment) as the executed arm for this `pair_key`.
 
 | Filename | Role |
 |----------|------|
-| **`trajectories.pt`** | Primary payload: serialized structure (e.g. `torch.save` of a dict or list of episode records) containing **paired** executed + CEM fields. **Alternatives** (if agreed with bridge): `trajectories.pth`, `episodes.npz` with an `episodes` object array, or newline-delimited **`.jsonl`** — manifest must declare the actual **`trajectories_file`** (see below). |
+| **`trajectories.pt`** or shard payload files | Primary payload: serialized structure containing **paired** executed + CEM fields. Single-file mode may write `trajectories.pt`; memory-bounded mode may write shard files (for example `trajectories_shard_00000.pt`, `..._00001.pt`). Manifest must declare the concrete payload files (see shard contract below). |
 | **`export_manifest.json`** | Sidecar describing export run and schema so `bridge_builder.py` can fail fast. |
 
 ### `export_manifest.json` — required keys
@@ -73,6 +73,31 @@ Same `step_index` (or chunk alignment) as the executed arm for this `pair_key`.
 | `pairing` | string | e.g. `executed_latent_aligned` — documents that real and latent arms share `pair_key` + `step_index`. |
 
 **Recommended (optional) keys:** `git_sha`, `exporter_script`, `num_episodes`, `policy_checkpoint`, `cem_config` (horizon, population, etc.).
+
+---
+
+## Shard contract (memory-bounded export)
+
+When `--episodes-per-shard` is set, exporter output is contractually sharded.
+
+| Key | Type | Notes |
+|-----|------|-------|
+| `episodes_per_shard` | int | Requested shard size (default `1` in phase07 wiring). |
+| `shard_count` | int | Number of completed shard payload files. |
+| `shard_files` | array[string] | Ordered list of payload files consumed by phase08. |
+| `complete_episodes` | int | Number of episodes fully materialized across shards. |
+
+Bridge readers must treat `shard_files` as the source of truth when present, and preserve list order for deterministic replay and split assignment.
+
+### Compact payload layout
+
+Each shard payload stores a compact episode list with paired records only (no duplicate full-run envelope per file):
+
+- Episode envelope: `pair_key`, `task_id`, `episode_index`
+- Executed arm: aligned step records with observation refs/payload, executed `action`, optional `reward`/`success`/`done`
+- Predicted arm: aligned `latent_pred`, optional `cem_action_sequence`, and CEM diagnostics (`cem_iterations`, `cem_cost`, `cem_seed`, optional `planner_metadata`)
+
+Writers may choose inline tensors or sidecar refs, but field names and pairing semantics above remain stable for a given `schema_version`.
 
 ---
 
