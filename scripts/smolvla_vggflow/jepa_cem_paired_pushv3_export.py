@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Paired push-v3 rollouts: executed trajectories + JEPA-WM CEM-planned latents.
 
-Writes trajectories.pt (list of episode dicts) and export_manifest.json for bridge_builder.
+Writes per-episode trajectory shards and export_manifest.json for bridge_builder.
 See docs/CEM_PAIRED_PUSHV3_SCHEMA.md for the contract.
 
 - **Executed actions (default CEM-primary):** With ``--execution-policy=cem_primary`` (default),
@@ -95,23 +95,95 @@ def _compute_export_quality_metrics(episodes: list[dict[str, Any]]) -> dict[str,
     }
 
 
-def _infer_manifest_latent_pred_dim(episodes: list[dict[str, Any]]) -> int | None:
-    for episode in episodes:
-        plan = episode.get("cem_plan") if isinstance(episode, dict) else None
-        per_step = plan.get("per_step") if isinstance(plan, dict) else []
+@dataclass
+class ExportQualityAccumulator:
+    total_episodes: int = 0
+    episodes_with_images: int = 0
+    heuristic_episodes: int = 0
+    total_steps: int = 0
+    wm_error_steps: int = 0
+    policy_error_steps: int = 0
+
+    def update(self, episode: dict[str, Any]) -> None:
+        self.total_episodes += 1
+        images = episode.get("images")
+        if isinstance(images, list) and len(images) > 0:
+            self.episodes_with_images += 1
+        per_step = (
+            ((episode.get("cem_plan") or {}).get("per_step") if isinstance(episode.get("cem_plan"), dict) else [])
+            or []
+        )
+        has_heuristic = False
         for row in per_step:
             if not isinstance(row, dict):
                 continue
-            dim = row.get("latent_pred_dim")
+            self.total_steps += 1
+            policy_source = str(row.get("policy_source", "")).strip()
+            if policy_source in {"heuristic_fallback", "heuristic"}:
+                has_heuristic = True
+            planner_metadata = row.get("planner_metadata") if isinstance(row.get("planner_metadata"), dict) else {}
+            if isinstance(planner_metadata, dict):
+                if planner_metadata.get("wm_step_error"):
+                    self.wm_error_steps += 1
+                if planner_metadata.get("policy_exec_error"):
+                    self.policy_error_steps += 1
+        if not has_heuristic:
+            policy_label = str((episode.get("meta") or {}).get("policy", "")).strip() if isinstance(episode.get("meta"), dict) else ""
+            has_heuristic = policy_label in {"heuristic_fallback", "heuristic"}
+        if has_heuristic:
+            self.heuristic_episodes += 1
+
+    def to_metrics(self) -> dict[str, float]:
+        wm_step_error_rate = float(self.wm_error_steps / self.total_steps) if self.total_steps > 0 else 0.0
+        policy_exec_error_rate = float(self.policy_error_steps / self.total_steps) if self.total_steps > 0 else 0.0
+        heuristic_ratio = (
+            float(self.heuristic_episodes / self.total_episodes) if self.total_episodes > 0 else 0.0
+        )
+        return {
+            "total_episodes": float(self.total_episodes),
+            "episodes_with_images": float(self.episodes_with_images),
+            "total_steps": float(self.total_steps),
+            "wm_step_error_rate": wm_step_error_rate,
+            "policy_exec_error_rate": policy_exec_error_rate,
+            "heuristic_fallback_episode_ratio": heuristic_ratio,
+        }
+
+
+def _infer_episode_latent_pred_dim(episode: dict[str, Any]) -> int | None:
+    plan = episode.get("cem_plan") if isinstance(episode, dict) else None
+    per_step = plan.get("per_step") if isinstance(plan, dict) else []
+    for row in per_step:
+        if not isinstance(row, dict):
+            continue
+        dim = row.get("latent_pred_dim")
+        try:
+            dim_i = int(dim)
+            if dim_i > 0:
+                return dim_i
+        except Exception:
+            pass
+        latent = row.get("latent_pred")
+        if torch.is_tensor(latent):
             try:
-                dim_i = int(dim)
-                if dim_i > 0:
-                    return dim_i
+                latent_dim = int(latent.detach().reshape(-1).numel())
+                if latent_dim > 0:
+                    return latent_dim
             except Exception:
                 pass
-            latent = row.get("latent_pred")
-            if isinstance(latent, list) and len(latent) > 0:
-                return int(len(latent))
+        elif hasattr(latent, "shape"):
+            latent_arr = np.asarray(latent).reshape(-1)
+            if int(latent_arr.size) > 0:
+                return int(latent_arr.size)
+        elif isinstance(latent, list) and len(latent) > 0:
+            return int(len(latent))
+    return None
+
+
+def _infer_manifest_latent_pred_dim(episodes: list[dict[str, Any]]) -> int | None:
+    for episode in episodes:
+        dim = _infer_episode_latent_pred_dim(episode)
+        if dim is not None:
+            return dim
     return None
 
 
@@ -964,29 +1036,36 @@ def main() -> int:
         env.set_task(tasks[0])
 
     rng = np.random.default_rng(args.seed)
-    episodes: list[dict[str, Any]] = []
+    episodes_dir = args.out / "episodes"
+    episode_writer = EpisodeShardWriter(episodes_dir, episodes_per_shard=1)
+    metrics_acc = ExportQualityAccumulator()
+    latent_pred_dim: int | None = None
     for ep in range(args.episodes):
         pk = str(uuid.uuid4())
-        episodes.append(
-            rollout_episode(
-                env,
-                args.max_steps,
-                pk,
-                wm_bundle,
-                smolvla_bundle,
-                task_text,
-                args.cem_horizon,
-                args.cem_pop,
-                args.cem_iters,
-                args.execution_policy,
-                store_cem_plan_seq,
-                store_smolvla_action,
-                full_latents_export,
-                rng,
-            )
+        episode = rollout_episode(
+            env,
+            args.max_steps,
+            pk,
+            wm_bundle,
+            smolvla_bundle,
+            task_text,
+            args.cem_horizon,
+            args.cem_pop,
+            args.cem_iters,
+            args.execution_policy,
+            store_cem_plan_seq,
+            store_smolvla_action,
+            full_latents_export,
+            rng,
         )
+        episode_writer.write_episode(episode)
+        metrics_acc.update(episode)
+        if latent_pred_dim is None:
+            latent_pred_dim = _infer_episode_latent_pred_dim(episode)
+        del episode
 
-    quality_metrics = _compute_export_quality_metrics(episodes)
+    written_episode_files = episode_writer.finalize()
+    quality_metrics = metrics_acc.to_metrics()
     try:
         _enforce_export_quality_gates(
             quality_metrics,
@@ -1005,14 +1084,13 @@ def main() -> int:
         pass
 
     args.out.mkdir(parents=True, exist_ok=True)
-    traj_path = args.out / "trajectories.pt"
-    torch.save(episodes, traj_path)
-    latent_pred_dim = _infer_manifest_latent_pred_dim(episodes)
 
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "export_mode": EXPORT_MODE,
-        "trajectories_file": str(traj_path.name),
+        "trajectories_file": "episodes",
+        "trajectories_format": "pt_per_episode",
+        "trajectories_glob": "episodes/episode_*.pt",
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
         "task_id": args.task,
         "jepa_ckpt": args.jepa_ckpt or _resolve_ckpt("jepa_wm_metaworld.pth.tar"),
@@ -1049,7 +1127,7 @@ def main() -> int:
         },
     }
     (args.out / "export_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    print(f"[cem_paired_export] wrote {len(episodes)} episodes -> {traj_path}")
+    print(f"[cem_paired_export] wrote {len(written_episode_files)} episodes -> {episodes_dir}")
     return 0
 
 

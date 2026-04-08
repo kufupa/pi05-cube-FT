@@ -3,6 +3,7 @@ import pickle
 import sys
 import tempfile
 import types
+import unittest
 from pathlib import Path
 
 import numpy as np
@@ -139,3 +140,58 @@ def test_episode_shard_writer_flush_writes_per_episode_files():
         restored = [jepa_export.torch.load(path) for path in files]
         indices = sorted(int(item["meta"]["episode_index"]) for item in restored)
         assert indices == [0, 1]
+
+
+class ExporterMemoryBoundedTests(unittest.TestCase):
+    def test_incremental_metrics_match_legacy_metrics(self):
+        episodes = [
+            {
+                "meta": {"policy": "cem_primary"},
+                "images": [np.zeros((4, 4, 3), dtype=np.uint8)],
+                "cem_plan": {
+                    "per_step": [
+                        {
+                            "policy_source": "cem_mpc_wm",
+                            "planner_metadata": {"wm_step_error": False, "policy_exec_error": False},
+                            "latent_pred_dim": 256,
+                        },
+                        {
+                            "policy_source": "heuristic_fallback",
+                            "planner_metadata": {"wm_step_error": True, "policy_exec_error": False},
+                        },
+                    ]
+                },
+            },
+            {
+                "meta": {"policy": "heuristic"},
+                "images": [],
+                "cem_plan": {
+                    "per_step": [
+                        {
+                            "policy_source": "smolvla",
+                            "planner_metadata": {"wm_step_error": False, "policy_exec_error": True},
+                        }
+                    ]
+                },
+            },
+            {
+                "meta": {"policy": "cem_primary"},
+                "images": [np.ones((2, 2, 3), dtype=np.uint8)],
+                "cem_plan": {"per_step": ["invalid-row", {"policy_source": "cem_mpc_wm", "planner_metadata": {}}]},
+            },
+            {
+                "meta": {"policy": "heuristic_fallback"},
+                "images": None,
+                "cem_plan": {},
+            },
+        ]
+
+        legacy_metrics = jepa_export._compute_export_quality_metrics(episodes)
+        acc = jepa_export.ExportQualityAccumulator()
+        for episode in episodes:
+            acc.update(episode)
+        incremental_metrics = acc.to_metrics()
+
+        assert set(legacy_metrics.keys()) == set(incremental_metrics.keys())
+        for key, legacy_value in legacy_metrics.items():
+            assert abs(float(legacy_value) - float(incremental_metrics[key])) < 1e-12
