@@ -27,6 +27,17 @@ _METAWORLD_IMAGE_HW = (480, 480)
 
 REQUIRED_FIELDS = ("images", "state", "actions", "language", "done", "success", "action", "action_chunk")
 
+BRIDGE_SUMMARY_FIELD_MAP = {
+    "images": "observation.image",
+    "state": ["observation.state", "observation.environment_state"],
+    "actions/action_chunk": "action",
+    "cem_plan.per_step[].step_index": "frame_index",
+    "cem_plan.per_step[].policy_source": "not_exported_to_lerobot_columns",
+    "cem_plan.per_step[].action_smolvla_chunk": "not_exported_to_lerobot_columns",
+    "cem_plan.per_step[].action_wm_cem_plan_seq": "not_exported_to_lerobot_columns",
+    "cem_plan.per_step[].latent_pred": "not_exported_to_lerobot_columns",
+}
+
 
 def _safe_float(value: Any, default: float = 1.0) -> float:
     try:
@@ -590,9 +601,19 @@ def _write_lerobot_v21_smolvla_split(
     meta = split_root / "meta"
     meta.mkdir(parents=True, exist_ok=True)
     if not episodes_meta:
-        raise RuntimeError(
-            "[bridge] smolvla_metaworld emit: no episodes after alignment (empty state/action steps)."
+        _append_jsonl(meta / "tasks.jsonl", [{"task_index": 0, "task": task_str}])
+        _append_jsonl(meta / "episodes.jsonl", [])
+        _append_jsonl(meta / "episodes_stats.jsonl", [])
+        _write_split_info_v21(
+            split_root,
+            split_name,
+            0,
+            0,
+            source_files,
+            out_parent,
+            features,
         )
+        return 0
 
     _append_jsonl(meta / "tasks.jsonl", [{"task_index": 0, "task": task_str}])
     _append_jsonl(meta / "episodes.jsonl", episodes_meta)
@@ -623,6 +644,13 @@ def _run_lerobot_v21_to_v30(split_root: Path) -> None:
     if proc.returncode != 0:
         msg = proc.stdout + "\n" + proc.stderr
         raise RuntimeError(f"LeRobot v2.1→v3.0 conversion failed for {split_root}:\n{msg}")
+
+
+def _split_has_emitted_episodes(split_root: Path) -> bool:
+    data_dir = split_root / "data" / "chunk-000"
+    if not data_dir.is_dir():
+        return False
+    return any(data_dir.glob("episode_*.parquet"))
 
 
 def _write_root_meta_smolvla(
@@ -751,6 +779,12 @@ def _write_placeholder_dataset(out_dir: Path) -> None:
                 "filtered_empty": 0,
                 "source_files": 0,
                 "empty_inputs": True,
+                "quality_metrics": {
+                    "image_nonblank_ratio": 0.0,
+                    "heuristic_fallback_episode_ratio": 0.0,
+                    "action_std_mean": 0.0,
+                },
+                "field_map_exporter_to_lerobot": BRIDGE_SUMMARY_FIELD_MAP,
             },
             indent=2,
         ),
@@ -771,6 +805,110 @@ def _coerce_list(value: Any) -> List[Any]:
     return list(value) if hasattr(value, "__iter__") else [value]
 
 
+def _episode_policy_sources(item: Dict[str, Any]) -> List[str]:
+    meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+    plan = meta.get("cem_plan") if isinstance(meta, dict) else {}
+    per_step = plan.get("per_step") if isinstance(plan, dict) else []
+    sources: List[str] = []
+    for step in _coerce_list(per_step):
+        if not isinstance(step, dict):
+            continue
+        src = step.get("policy_source")
+        if isinstance(src, str) and src.strip():
+            sources.append(src.strip())
+    if sources:
+        return sources
+    nested_meta = meta.get("meta") if isinstance(meta, dict) else {}
+    fallback_src = nested_meta.get("policy") if isinstance(nested_meta, dict) else None
+    if isinstance(fallback_src, str) and fallback_src.strip():
+        return [fallback_src.strip()]
+    return []
+
+
+def _is_nonblank_numeric_image(image: Any) -> bool:
+    if image is None:
+        return False
+    try:
+        arr = np.asarray(image)
+    except Exception:
+        return False
+    if arr.size <= 0:
+        return False
+    if arr.dtype.kind not in {"b", "i", "u", "f"}:
+        return False
+    try:
+        finite = np.isfinite(arr)
+    except Exception:
+        return False
+    if not bool(np.any(finite)):
+        return False
+    safe = np.where(finite, arr, 0)
+    return bool(np.any(safe != 0))
+
+
+def _compute_quality_metrics(records: List[Dict[str, Any]]) -> Dict[str, float]:
+    total_frames = 0
+    nonblank_frames = 0
+    total_episodes = len(records)
+    heuristic_episodes = 0
+    flat_actions: List[float] = []
+
+    for item in records:
+        images = _coerce_list(item.get("images", []))
+        for image in images:
+            total_frames += 1
+            if _is_nonblank_numeric_image(image):
+                nonblank_frames += 1
+
+        sources = _episode_policy_sources(item)
+        if any(src in {"heuristic_fallback", "heuristic"} for src in sources):
+            heuristic_episodes += 1
+
+        action_steps = _coerce_list(item.get("action_chunk", item.get("actions", [])))
+        if action_steps and isinstance(action_steps[0], (int, float)):
+            action_steps = [action_steps]
+        for step in action_steps:
+            try:
+                vec = np.asarray(step, dtype=np.float32).reshape(-1)
+            except Exception:
+                continue
+            if vec.size == 0:
+                continue
+            flat_actions.extend(vec.tolist())
+
+    action_std_mean = float(np.std(np.asarray(flat_actions, dtype=np.float32))) if flat_actions else 0.0
+    image_nonblank_ratio = float(nonblank_frames / total_frames) if total_frames > 0 else 0.0
+    heuristic_ratio = float(heuristic_episodes / total_episodes) if total_episodes > 0 else 0.0
+    return {
+        "image_nonblank_ratio": image_nonblank_ratio,
+        "heuristic_fallback_episode_ratio": heuristic_ratio,
+        "action_std_mean": action_std_mean,
+    }
+
+
+def _enforce_quality_gates(
+    metrics: Dict[str, float],
+    *,
+    min_image_coverage: float,
+    max_heuristic_ratio: float,
+    min_action_std: float,
+) -> None:
+    image_cov = float(metrics.get("image_nonblank_ratio", 0.0))
+    heuristic_ratio = float(metrics.get("heuristic_fallback_episode_ratio", 0.0))
+    action_std = float(metrics.get("action_std_mean", 0.0))
+    if image_cov < min_image_coverage:
+        raise RuntimeError(
+            f"image_nonblank_ratio below threshold: {image_cov:.4f} < {min_image_coverage:.4f}"
+        )
+    if heuristic_ratio > max_heuristic_ratio:
+        raise RuntimeError(
+            "heuristic_fallback_episode_ratio above threshold: "
+            f"{heuristic_ratio:.4f} > {max_heuristic_ratio:.4f}"
+        )
+    if action_std < min_action_std:
+        raise RuntimeError(f"action_std_mean below threshold: {action_std:.4f} < {min_action_std:.4f}")
+
+
 def _is_valid_record(item: Dict[str, Any], min_actions: int) -> bool:
     if min_actions > 0:
         return len(_coerce_list(item.get("action_chunk", []))) >= min_actions
@@ -786,6 +924,9 @@ def main() -> int:
     parser.add_argument("--val-ratio", type=float, default=0.15)
     parser.add_argument("--max-train", type=int, default=0)
     parser.add_argument("--min-action-length", type=int, default=1)
+    parser.add_argument("--min-image-coverage", type=float, default=0.95)
+    parser.add_argument("--max-heuristic-ratio", type=float, default=0.10)
+    parser.add_argument("--min-action-std", type=float, default=0.02)
     parser.add_argument(
         "--no-convert-v30",
         action="store_true",
@@ -817,6 +958,13 @@ def main() -> int:
     filtered_conf = len(filtered)
     filtered = [item for item in filtered if _is_valid_record(item, args.min_action_length)]
     filtered_empty = len(filtered)
+    quality_metrics = _compute_quality_metrics(filtered)
+    _enforce_quality_gates(
+        quality_metrics,
+        min_image_coverage=float(args.min_image_coverage),
+        max_heuristic_ratio=float(args.max_heuristic_ratio),
+        min_action_std=float(args.min_action_std),
+    )
 
     if args.val_ratio < 0:
         val_ratio = 0.0
@@ -869,8 +1017,10 @@ def main() -> int:
         return 1
     if not args.no_convert_v30:
         try:
-            _run_lerobot_v21_to_v30(out_dir / "train")
-            _run_lerobot_v21_to_v30(out_dir / "val")
+            if _split_has_emitted_episodes(out_dir / "train"):
+                _run_lerobot_v21_to_v30(out_dir / "train")
+            if _split_has_emitted_episodes(out_dir / "val"):
+                _run_lerobot_v21_to_v30(out_dir / "val")
         except Exception as exc:
             print(f"[bridge] {exc}")
             return 1
@@ -890,6 +1040,13 @@ def main() -> int:
         "manifest_export_mode": manifest_mode,
         "lerobot_layout": "smolvla_metaworld_jadechoghari",
         "lerobot_codebase": "v3.0" if not args.no_convert_v30 else "v2.1",
+        "quality_metrics": quality_metrics,
+        "quality_thresholds": {
+            "min_image_coverage": float(args.min_image_coverage),
+            "max_heuristic_ratio": float(args.max_heuristic_ratio),
+            "min_action_std": float(args.min_action_std),
+        },
+        "field_map_exporter_to_lerobot": BRIDGE_SUMMARY_FIELD_MAP,
     }
     (out_dir / "bridge_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 

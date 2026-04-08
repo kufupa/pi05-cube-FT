@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import torch
 
 
 MODULE = Path(__file__).resolve().parents[1] / "jepa_cem_paired_pushv3_export.py"
@@ -48,9 +49,33 @@ class ExporterContiguousTests(unittest.TestCase):
             action_smolvla_raw=np.array([0.9, 0.9, 0.9, 0.9], dtype=np.float32),
             env_action_dim=4,
             wm_available=True,
+            execution_policy="cem_primary",
         )
         self.assertEqual(out["policy_source"], "cem_mpc_wm")
-        self.assertEqual(len(out["action_executed"]), 4)
+        np.testing.assert_allclose(
+            np.asarray(out["action_executed"], dtype=np.float32),
+            np.asarray([0.1, 0.2, 0.3, 0.4], dtype=np.float32),
+            rtol=0.0,
+            atol=1e-6,
+        )
+
+    def test_smolvla_primary_action_selection(self):
+        out = jepa_export._select_executed_action(
+            obs=np.zeros(16, dtype=np.float32),
+            env=DummyEnv(np.zeros((8, 8, 3), dtype=np.uint8)),
+            action_wm_cem_first=np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float32),
+            action_smolvla_raw=np.array([0.9, 0.8, 0.7, 0.6], dtype=np.float32),
+            env_action_dim=4,
+            wm_available=True,
+            execution_policy="smolvla_primary",
+        )
+        self.assertEqual(out["policy_source"], "smolvla")
+        np.testing.assert_allclose(
+            np.asarray(out["action_executed"], dtype=np.float32),
+            np.asarray([0.9, 0.8, 0.7, 0.6], dtype=np.float32),
+            rtol=0.0,
+            atol=1e-6,
+        )
 
     def test_smolvla_selected_when_cem_missing(self):
         out = jepa_export._select_executed_action(
@@ -60,6 +85,7 @@ class ExporterContiguousTests(unittest.TestCase):
             action_smolvla_raw=np.array([0.8, 0.7, 0.6, 0.5], dtype=np.float32),
             env_action_dim=4,
             wm_available=True,
+            execution_policy="cem_primary",
         )
         self.assertEqual(out["policy_source"], "smolvla")
 
@@ -71,6 +97,7 @@ class ExporterContiguousTests(unittest.TestCase):
             action_smolvla_raw=None,
             env_action_dim=4,
             wm_available=True,
+            execution_policy="cem_primary",
         )
         self.assertEqual(out["policy_source"], "heuristic_fallback")
 
@@ -82,8 +109,26 @@ class ExporterContiguousTests(unittest.TestCase):
             action_smolvla_raw=None,
             env_action_dim=4,
             wm_available=False,
+            execution_policy="cem_primary",
         )
         self.assertEqual(out["policy_source"], "heuristic")
+
+    def test_cem_first_action_raises_when_all_unrolls_fail(self):
+        class _FailingModel:
+            def unroll(self, *args, **kwargs):
+                raise RuntimeError("forced unroll failure")
+
+        with self.assertRaises(RuntimeError):
+            jepa_export.cem_first_action(
+                model=_FailingModel(),
+                z=torch.zeros((1, 1, 8), dtype=torch.float32),
+                action_dim=4,
+                horizon=2,
+                pop_size=2,
+                cem_iters=2,
+                device=torch.device("cpu"),
+                rng=np.random.default_rng(0),
+            )
 
 
 if __name__ == "__main__":

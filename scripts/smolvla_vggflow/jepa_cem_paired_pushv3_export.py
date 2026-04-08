@@ -4,10 +4,10 @@
 Writes trajectories.pt (list of episode dicts) and export_manifest.json for bridge_builder.
 See docs/CEM_PAIRED_PUSHV3_SCHEMA.md for the contract.
 
-- **Executed actions:** If ``--policy-checkpoint`` (or ``SMOLVLA_INIT_CHECKPOINT``) is set and
-  LeRobot loads, uses ``SmolVLA`` + hub ``policy_preprocessor`` / ``policy_postprocessor``
-  (same path as ``lerobot-eval``). Otherwise, when the world model loads, uses the first
-  action of a short CEM plan; else a non-random heuristic push controller.
+- **Executed actions (default CEM-primary):** With ``--execution-policy=cem_primary`` (default),
+  exporter executes WM/CEM first action when available, then SmolVLA action if policy is loaded,
+  else heuristic fallback. ``--execution-policy=smolvla_primary`` is available as an explicit
+  ablation mode.
 - **Latent / CEM arm:** Whenever the WM loads, still runs CEM on the latent unroll and
   records per-step metadata (independent of which controller produced ``a_exec``).
 - **CUDA:** WM+CEM runs whenever the hub model loads; ``device`` follows ``--device`` /
@@ -34,6 +34,95 @@ import torch
 
 SCHEMA_VERSION = "cem_paired_push_v3_v0"
 EXPORT_MODE = "cem_paired_push_v3"
+_EXECUTION_POLICIES = ("cem_primary", "smolvla_primary")
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    return text not in ("", "0", "false", "no", "off")
+
+
+def _compute_export_quality_metrics(episodes: list[dict[str, Any]]) -> dict[str, float]:
+    total_episodes = len(episodes)
+    episodes_with_images = 0
+    heuristic_episodes = 0
+    total_steps = 0
+    wm_error_steps = 0
+    policy_error_steps = 0
+
+    for episode in episodes:
+        images = episode.get("images")
+        if isinstance(images, list) and len(images) > 0:
+            episodes_with_images += 1
+        per_step = (
+            ((episode.get("cem_plan") or {}).get("per_step") if isinstance(episode.get("cem_plan"), dict) else [])
+            or []
+        )
+        has_heuristic = False
+        for row in per_step:
+            if not isinstance(row, dict):
+                continue
+            total_steps += 1
+            policy_source = str(row.get("policy_source", "")).strip()
+            if policy_source in {"heuristic_fallback", "heuristic"}:
+                has_heuristic = True
+            planner_metadata = row.get("planner_metadata") if isinstance(row.get("planner_metadata"), dict) else {}
+            if isinstance(planner_metadata, dict):
+                if planner_metadata.get("wm_step_error"):
+                    wm_error_steps += 1
+                if planner_metadata.get("policy_exec_error"):
+                    policy_error_steps += 1
+        if not has_heuristic:
+            policy_label = str((episode.get("meta") or {}).get("policy", "")).strip() if isinstance(episode.get("meta"), dict) else ""
+            has_heuristic = policy_label in {"heuristic_fallback", "heuristic"}
+        if has_heuristic:
+            heuristic_episodes += 1
+
+    wm_step_error_rate = float(wm_error_steps / total_steps) if total_steps > 0 else 0.0
+    policy_exec_error_rate = float(policy_error_steps / total_steps) if total_steps > 0 else 0.0
+    heuristic_ratio = float(heuristic_episodes / total_episodes) if total_episodes > 0 else 0.0
+    return {
+        "total_episodes": float(total_episodes),
+        "episodes_with_images": float(episodes_with_images),
+        "total_steps": float(total_steps),
+        "wm_step_error_rate": wm_step_error_rate,
+        "policy_exec_error_rate": policy_exec_error_rate,
+        "heuristic_fallback_episode_ratio": heuristic_ratio,
+    }
+
+
+def _enforce_export_quality_gates(
+    metrics: dict[str, float],
+    *,
+    max_wm_error_rate: float,
+    max_policy_error_rate: float,
+    require_images: bool,
+    max_heuristic_ratio: float,
+) -> None:
+    wm_error_rate = float(metrics.get("wm_step_error_rate", 0.0))
+    policy_error_rate = float(metrics.get("policy_exec_error_rate", 0.0))
+    episodes_with_images = int(metrics.get("episodes_with_images", 0))
+    total_episodes = int(metrics.get("total_episodes", 0))
+    heuristic_ratio = float(metrics.get("heuristic_fallback_episode_ratio", 0.0))
+    if wm_error_rate > max_wm_error_rate:
+        raise RuntimeError(f"wm_step_error_rate above threshold: {wm_error_rate:.4f} > {max_wm_error_rate:.4f}")
+    if policy_error_rate > max_policy_error_rate:
+        raise RuntimeError(
+            f"policy_exec_error_rate above threshold: {policy_error_rate:.4f} > {max_policy_error_rate:.4f}"
+        )
+    if require_images and episodes_with_images < total_episodes:
+        raise RuntimeError(
+            f"episodes_with_images below required coverage: {episodes_with_images}/{total_episodes}"
+        )
+    if heuristic_ratio > max_heuristic_ratio:
+        raise RuntimeError(
+            "heuristic_fallback_episode_ratio above threshold: "
+            f"{heuristic_ratio:.4f} > {max_heuristic_ratio:.4f}"
+        )
 
 
 def _to_rgb_list(arr: Any) -> list[list[list[float]]]:
@@ -106,7 +195,14 @@ def _select_executed_action(
     action_smolvla_raw: np.ndarray | None,
     env_action_dim: int,
     wm_available: bool,
+    execution_policy: str = "cem_primary",
 ) -> dict[str, Any]:
+    policy = str(execution_policy).strip().lower()
+    if policy not in _EXECUTION_POLICIES:
+        policy = "cem_primary"
+    if policy == "smolvla_primary" and action_smolvla_raw is not None:
+        a = _clip_action_to_env(action_smolvla_raw, env_action_dim)
+        return {"action_executed": a.tolist(), "policy_source": "smolvla"}
     if action_wm_cem_first is not None:
         a = _clip_action_to_env(action_wm_cem_first, env_action_dim)
         return {"action_executed": a.tolist(), "policy_source": "cem_mpc_wm"}
@@ -461,6 +557,7 @@ def cem_first_action(
     best_seq = torch.zeros(horizon, action_dim, device=device, dtype=torch.float32)
     best_score = -1e18
     best_z_pred: Any = None
+    successful_unrolls = 0
     for _ in range(cem_iters):
         for _p in range(pop_size):
             noise = torch.randn(horizon, action_dim, device=device, dtype=torch.float32) * 0.35
@@ -468,6 +565,7 @@ def cem_first_action(
             try:
                 act_suffix = seq.unsqueeze(1)
                 z_pred = model.unroll(z, act_suffix=act_suffix, debug=False)
+                successful_unrolls += 1
                 sc = _score_unroll(z_pred)
                 if sc > best_score:
                     best_score = sc
@@ -475,6 +573,8 @@ def cem_first_action(
                     best_z_pred = z_pred
             except Exception:
                 continue
+    if successful_unrolls <= 0 or best_z_pred is None:
+        raise RuntimeError("cem_unroll_failed_all_candidates")
     meta = {
         "cem_iterations": int(cem_iters * pop_size),
         "cem_cost": float(-best_score),
@@ -507,6 +607,7 @@ def rollout_episode(
     cem_horizon: int,
     cem_pop: int,
     cem_iters: int,
+    execution_policy: str,
     rng: np.random.Generator,
 ) -> dict[str, Any]:
     seed = int(rng.integers(0, 2**31 - 1))
@@ -620,6 +721,7 @@ def rollout_episode(
             action_smolvla_raw=a_smolvla,
             env_action_dim=env_action_dim,
             wm_available=model is not None,
+            execution_policy=execution_policy,
         )
         a_exec = np.asarray(action_pick["action_executed"], dtype=np.float32).reshape(-1)
         policy_used = str(action_pick["policy_source"])
@@ -674,7 +776,25 @@ def main() -> int:
     ap.add_argument("--cem-horizon", type=int, default=4)
     ap.add_argument("--cem-pop", type=int, default=8)
     ap.add_argument("--cem-iters", type=int, default=2)
+    ap.add_argument(
+        "--execution-policy",
+        choices=list(_EXECUTION_POLICIES),
+        default="cem_primary",
+        help=(
+            "Executed-action arbitration. Default 'cem_primary' enforces WM/CEM-first, "
+            "with SmolVLA then heuristic fallback; 'smolvla_primary' is optional ablation."
+        ),
+    )
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--max-wm-error-rate", type=float, default=0.05)
+    ap.add_argument("--max-policy-error-rate", type=float, default=0.05)
+    ap.add_argument("--max-heuristic-fallback-episode-ratio", type=float, default=0.10)
+    ap.add_argument(
+        "--require-images",
+        type=int,
+        default=1,
+        help="Require every episode to contain at least one image frame (1=yes,0=no).",
+    )
     ap.add_argument(
         "--policy-checkpoint",
         default=os.environ.get("SMOLVLA_INIT_CHECKPOINT", ""),
@@ -740,9 +860,23 @@ def main() -> int:
                 args.cem_horizon,
                 args.cem_pop,
                 args.cem_iters,
+                args.execution_policy,
                 rng,
             )
         )
+
+    quality_metrics = _compute_export_quality_metrics(episodes)
+    try:
+        _enforce_export_quality_gates(
+            quality_metrics,
+            max_wm_error_rate=float(args.max_wm_error_rate),
+            max_policy_error_rate=float(args.max_policy_error_rate),
+            require_images=_as_bool(args.require_images),
+            max_heuristic_ratio=float(args.max_heuristic_fallback_episode_ratio),
+        )
+    except RuntimeError as exc:
+        print(f"[cem_paired_export] quality gate failed: {exc}")
+        return 1
 
     try:
         env.close()
@@ -772,8 +906,16 @@ def main() -> int:
         "wm_skipped_export": bool(skip_wm),
         "policy_checkpoint": policy_ckpt or None,
         "policy_loaded": smolvla_bundle is not None,
+        "execution_policy": args.execution_policy,
         "policy_load_vlm_weights": os.environ.get("SMOLVLA_JEPA_EXPORT_POLICY_LOAD_VLM_WEIGHTS", "1"),
         "bridge_hint": "Point SMOLVLA_JEPA_SOURCE at this directory for phase08.",
+        "quality_metrics": quality_metrics,
+        "quality_thresholds": {
+            "max_wm_error_rate": float(args.max_wm_error_rate),
+            "max_policy_error_rate": float(args.max_policy_error_rate),
+            "max_heuristic_fallback_episode_ratio": float(args.max_heuristic_fallback_episode_ratio),
+            "require_images": _as_bool(args.require_images),
+        },
     }
     (args.out / "export_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(f"[cem_paired_export] wrote {len(episodes)} episodes -> {traj_path}")
