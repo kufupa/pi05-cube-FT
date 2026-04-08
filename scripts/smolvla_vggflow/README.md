@@ -8,7 +8,7 @@ This directory stores the execution artifacts for the full plan implementation.
 - `preflight_dependency_order.sh`: run deterministic dependency checks in strict order (`CHECK_01_SLURM` through `CHECK_07_BRIDGE`) before submitting workflow stages.
 - `submit_workflow.sh`: submit the full **11-stage** serial Slurm DAG and write a `workflow_*.json` (includes **`generated_at_utc`**, **`run_id`** from exported `RUN_ID`; override path with `SMOLVLA_WORKFLOW_JSON`).
 - `smolvla_workflow_launcher.py --submit --branch-parallel`: optional fan-out/fan-in submit (same 11 scripts; **do not** use with `SMOLVLA_STAGE11_ENABLED=1`).
-- `watch_workflow.sh <workflow.json> [-- extra args]`: forwards to `watch_workflow.py` (e.g. `--auto-resubmit --max-retries 2`). Auto-resubmit adds `--gres=gpu:1` only when `scontrol` shows GPU in **Gres** or **AllocTRES/ReqTRES**, or the failure class was `no-gpu` (CPU stages such as `stage01b` stay CPU-only on `node_resources` retry). Job state uses **`sacct`** with **JobID-aware row selection** when Slurm returns multiple lines per id.
+- `watch_workflow.sh <workflow.json> [watch_workflow.py args]`: forwards to `watch_workflow.py` (e.g. `--auto-resubmit --max-retries 2`). Auto-resubmit adds `--gres=gpu:1` only when `scontrol` shows GPU in **Gres** or **AllocTRES/ReqTRES**, or the failure class was `no-gpu` (CPU stages such as `stage01b` stay CPU-only on `node_resources` retry). Job state uses **`sacct`** with **JobID-aware row selection** when Slurm returns multiple lines per id.
 
 ## Dependency-order preflight
 
@@ -42,6 +42,56 @@ For normal operation, from the **repo root** (`pi05-cube-FT`):
 Preferred GPU partition order can be controlled with:
 - `SMOLVLA_PARTITION_LIST="a100,a40,a30,t4,a16"`
 - `smolvla_workflow_launcher.py --submit` marks **stage00**, **stage01**, and **stage04** as GPU stages for partition retry (alongside train/eval), consistent with their `#SBATCH --gres=gpu:1` lines.
+
+## Controlled cleanup + rerun (no overwrite)
+
+Run this sequence from the repo root when recovering from a bad export/bridge run.
+
+1) Archive first (no destructive delete on first pass):
+
+```bash
+ARCHIVE_TAG="$(date -u +%Y%m%d)"
+mkdir -p "artifacts/regression_archive/${ARCHIVE_TAG}"
+mv "/vol/bitbucket/aa6622/.cache/jepa_workflow_egl_20260407T073139Z" \
+  "artifacts/regression_archive/${ARCHIVE_TAG}/"
+```
+
+2) Set one run scope and strict non-overwrite guards:
+
+```bash
+export RUN_ID="$(date -u +%Y%m%d_%H%M%S)"
+export SMOLVLA_RUN_SCOPE_ID="${RUN_ID}"
+export SMOLVLA_JEPA_EXPORT_OUT="/vol/bitbucket/aa6622/.cache/jepa_exports"
+export SMOLVLA_JEPA_SOURCE="${SMOLVLA_JEPA_EXPORT_OUT}"
+export SMOLVLA_DATA_ROOT="/vol/bitbucket/aa6622/pi05-cube-FT/datasets/bridged_v30_runs"
+export SMOLVLA_JEPA_EXPORT_FULL_LATENTS=1
+export SMOLVLA_FAIL_ON_PATH_REUSE=1
+```
+
+`common.sh` applies the run scope automatically (`.../run_${SMOLVLA_RUN_SCOPE_ID}`) to export/data/report/artifact roots, so do not pre-append `run_...` in these base paths.
+
+3) Run strict preflight and a dry-run DAG render:
+
+```bash
+bash scripts/smolvla_vggflow/preflight_dependency_order.sh && \
+bash scripts/smolvla_vggflow/submit_workflow.sh --dry-run
+```
+
+4) Submit branch-parallel and monitor:
+
+```bash
+python3 scripts/smolvla_vggflow/smolvla_workflow_launcher.py \
+  --submit \
+  --branch-parallel \
+  --write-json "runs/workflow_${RUN_ID}.json" \
+  --parallel-map-out "artifacts/parallel_submission_map_${RUN_ID}.json" && \
+bash scripts/smolvla_vggflow/watch_workflow.sh \
+  "runs/workflow_${RUN_ID}.json" \
+  --poll 90 --max-retries 2 --auto-resubmit
+```
+
+Expected sequencing in branch-parallel mode: `stage02 || stage03`, then bridge/gate prerequisites, then `stage06 || stage08`, then `stage05`, then `stage09`.
+This sequence is the recovery **target behavior**; it depends on the Task 6 launcher DAG patch and should be treated as intended ordering until that patch lands.
 
 ## Stage map
 
