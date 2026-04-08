@@ -1140,11 +1140,9 @@ def main() -> int:
         except Exception:
             pass
 
-    shard_files = sorted(
-        str(path.relative_to(args.out))
-        for path in written_episode_files
-        if path.is_file()
-    )
+    # Compute shard metadata from final promoted output paths.
+    shard_paths = sorted(path for path in episodes_dir.glob("episode_*.pt") if path.is_file())
+    shard_files = [str(path.relative_to(args.out)) for path in shard_paths]
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "export_mode": EXPORT_MODE,
