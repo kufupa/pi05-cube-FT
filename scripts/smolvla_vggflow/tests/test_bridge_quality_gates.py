@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import pickle
 import sys
 import tempfile
 import types
@@ -19,12 +20,37 @@ EXPORTER_MODULE = Path(__file__).resolve().parents[1] / "jepa_cem_paired_pushv3_
 EXPORTER_SPEC = importlib.util.spec_from_file_location("jepa_export", EXPORTER_MODULE)
 jepa_export = importlib.util.module_from_spec(EXPORTER_SPEC)
 assert EXPORTER_SPEC and EXPORTER_SPEC.loader
-if "torch" not in sys.modules:
+
+
+def _build_torch_import_stub() -> types.ModuleType:
     torch_stub = types.ModuleType("torch")
     torch_stub.is_tensor = lambda _: False
-    sys.modules["torch"] = torch_stub
-sys.modules[EXPORTER_SPEC.name] = jepa_export
-EXPORTER_SPEC.loader.exec_module(jepa_export)
+    torch_stub.Tensor = object
+    torch_stub.device = lambda *_args, **_kwargs: "cpu"
+    torch_stub.cuda = types.SimpleNamespace(is_available=lambda: False)
+
+    def _save(obj, path):
+        Path(path).write_bytes(pickle.dumps(obj))
+
+    def _load(path):
+        return pickle.loads(Path(path).read_bytes())
+
+    torch_stub.save = _save
+    torch_stub.load = _load
+    return torch_stub
+
+
+_original_torch_module = sys.modules.get("torch")
+if _original_torch_module is None:
+    sys.modules["torch"] = _build_torch_import_stub()
+try:
+    sys.modules[EXPORTER_SPEC.name] = jepa_export
+    EXPORTER_SPEC.loader.exec_module(jepa_export)
+finally:
+    if _original_torch_module is None:
+        del sys.modules["torch"]
+    else:
+        sys.modules["torch"] = _original_torch_module
 
 
 class BridgeQualityGateTests(unittest.TestCase):
