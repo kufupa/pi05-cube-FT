@@ -97,3 +97,29 @@ strace.out
 # PBS stdout/stderr dropped in repo root (7-digit job id suffix)
 *.e[0-9][0-9][0-9][0-9][0-9][0-9][0-9]
 *.o[0-9][0-9][0-9][0-9][0-9][0-9][0-9]
+
+# Slurm / cluster job logs in repo root
+slurm*.out
+
+# Pip / shell typo artifacts (e.g. mistyped `pip install foo=0.1.0`)
+/=0.1.0
+
+# --- Dual-cluster sync: large generated trees (policy: docs/superpowers/plans/2026-04-09-dual-cluster-git-sync.md) ---
+/datasets/
+
+# Workflow orchestration JSON dumps (allowlist small manifests below)
+/runs/**
+!/runs/
+!/runs/workflow_20260408_025416.json
+
+# Training/eval artifact trees (allowlist tiny eval metadata below)
+/artifacts/**
+!/artifacts/run_20260408_025416/
+!/artifacts/run_20260408_025416/phase13_posttrain_eval/
+!/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/
+!/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/eval_info.json
+
+# Stage / status reports: only curated per-run folders are tracked
+/reports/**
+!/reports/run_*/
+!/reports/run_*/**
