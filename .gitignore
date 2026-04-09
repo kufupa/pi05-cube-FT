@@ -119,7 +119,8 @@ slurm*.out
 !/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/
 !/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/eval_info.json
 
-# Stage / status reports: only curated per-run folders are tracked
+# Stage / status reports: only explicitly allowlisted per-run folders are tracked
+# (add a new !/reports/run_<id>/ block when committing another run snapshot)
 /reports/**
-!/reports/run_*/
-!/reports/run_*/**
+!/reports/run_20260408_025416/
+!/reports/run_20260408_025416/**
