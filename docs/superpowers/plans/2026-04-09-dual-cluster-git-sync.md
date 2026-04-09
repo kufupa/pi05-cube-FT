@@ -10,7 +10,7 @@ This repo is used from **two HPC clusters**. GitHub should carry **source, confi
 | Curated per-run folders under `reports/run_<run-id>/` | Ad-hoc `reports/*.md` at repo root |
 | Allowlisted tiny files (see `.gitignore` negation rules) | `*.pt`, `*.safetensors`, `*.mp4`, archives, caches |
 
-When you add a **new** run’s metadata to git, update `.gitignore` **allowlist** entries for that run (e.g. one `runs/workflow_<run>.json` path and `artifacts/.../eval_info.json` if needed), then commit intentionally.
+When you add a **new** run’s metadata to git, update `.gitignore` **allowlist** entries for that run: add `!/reports/run_<id>/` and `!/reports/run_<id>/**`, plus (if needed) `!/runs/workflow_<run>.json` and the `!/artifacts/.../eval_info.json` parent-chain lines—mirror the existing `run_20260408_025416` block—then commit intentionally.
 
 ## Branch naming
 
