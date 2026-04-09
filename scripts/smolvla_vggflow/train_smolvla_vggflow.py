@@ -779,7 +779,7 @@ def main() -> int:
     parser.add_argument(
         "--save-steps",
         type=int,
-        default=int(os.environ.get("SMOLVLA_TRAIN_SAVE_STEPS", "1000")),
+        default=int(os.environ.get("SMOLVLA_TRAIN_SAVE_STEPS", "2000")),
     )
     parser.add_argument("--lerobot-train-bin", default="")
     parser.add_argument("--dry-run", action="store_true")

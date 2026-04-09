@@ -323,15 +323,24 @@ def _read_json_records(source: Path) -> List[Dict[str, Any]]:
 
 
 def _read_py_records(source: Path) -> List[Dict[str, Any]]:
+    def _torch_load_payload(path: Path) -> Any:
+        import torch
+
+        # These .pt/.pth files are local pipeline artifacts, not arbitrary remote checkpoints.
+        # Force full unpickling for compatibility with PyTorch 2.6+ default weights_only=True.
+        try:
+            return torch.load(path, map_location="cpu", weights_only=False)
+        except TypeError:
+            # Older torch versions don't expose weights_only.
+            return torch.load(path, map_location="cpu")
+
     if source.suffix.lower() in {".json", ".jsonl"}:
         return _read_json_records(source)
     if source.suffix.lower() == ".npz":
         return _read_npz_records(source)
     if source.suffix.lower() in {".pth", ".pt", ".pickle", ".pkl"}:
         try:
-            import torch
-
-            payload = torch.load(source, map_location="cpu")
+            payload = _torch_load_payload(source)
             if _looks_like_model_checkpoint(payload):
                 print(f"[bridge] skipping model checkpoint: {source}")
                 return []
@@ -350,9 +359,7 @@ def _read_py_records(source: Path) -> List[Dict[str, Any]]:
             return []
     if source.suffix.lower().endswith(".tar") and source.name.lower().endswith(".pth.tar"):
         try:
-            import torch
-
-            payload = torch.load(source, map_location="cpu")
+            payload = _torch_load_payload(source)
             if _looks_like_model_checkpoint(payload):
                 print(f"[bridge] skipping model checkpoint: {source}")
                 return []

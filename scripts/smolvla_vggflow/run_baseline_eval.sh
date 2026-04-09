@@ -12,6 +12,8 @@ episodes="${SMOLVLA_BASELINE_EPISODES}"
 seed="${SMOLVLA_BASELINE_SEED}"
 device="${SMOLVLA_BASELINE_DEVICE}"
 video="${SMOLVLA_BASELINE_VIDEO}"
+use_amp="${SMOLVLA_BASELINE_USE_AMP}"
+episode_length="${SMOLVLA_BASELINE_EPISODE_LENGTH}"
 video_length="${SMOLVLA_BASELINE_VIDEO_LENGTH}"
 video_interval="${SMOLVLA_BASELINE_VIDEO_INTERVAL}"
 output_root="${SMOLVLA_ARTIFACT_ROOT}/phase06_baseline"
@@ -29,6 +31,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --device)
       device="${2}"
+      shift 2
+      ;;
+    --use-amp)
+      use_amp="${2}"
+      shift 2
+      ;;
+    --episode-length)
+      episode_length="${2}"
       shift 2
       ;;
     --video)
@@ -120,7 +130,7 @@ def _restore_datasets_module() -> None:
 _restore_datasets_module()
 PY
 
-log_info "Running baseline push-v3 eval: episodes=${episodes}, device=${device}, seed=${seed}, video=${video}, checkpoint=${checkpoint}"
+log_info "Running baseline push-v3 eval: episodes=${episodes}, episode_length=${episode_length}, device=${device}, use_amp=${use_amp}, seed=${seed}, video=${video}, checkpoint=${checkpoint}"
 xvfb-run -a -s "-screen 0 1280x1024x24" env \
   LEAKY=1 \
   UV_INSECURE_HOST=http://localhost:9999 \
@@ -140,7 +150,9 @@ xvfb-run -a -s "-screen 0 1280x1024x24" env \
   --eval.n_episodes ${episodes} \
   --eval.batch_size 1 \
   --eval.use_async_envs false \
+  --env.episode_length ${episode_length} \
   --policy.device ${device} \
+  --policy.use_amp ${use_amp} \
   --env.multitask_eval false \
   --output_dir '${output_dir}' \
   --seed ${seed}"
