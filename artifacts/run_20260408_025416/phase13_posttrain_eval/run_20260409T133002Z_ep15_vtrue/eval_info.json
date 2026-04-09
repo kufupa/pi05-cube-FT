@@ -1,0 +1,113 @@
+{
+  "per_task": [
+    {
+      "task_group": "push-v3",
+      "task_id": 0,
+      "metrics": {
+        "sum_rewards": [
+          46.49331857087605,
+          51.48042521805634,
+          17.175762018983654,
+          25.216539150887478,
+          31.566774670402566,
+          33.717645778235855,
+          54.50659642740872,
+          23.680189065517794,
+          26.417126995400277,
+          23.89764902283411,
+          38.22444808812762,
+          12.50017363326659,
+          76.49166978310788,
+          30.376101486503355,
+          26.867642714871394
+        ],
+        "max_rewards": [
+          0.1733261301898771,
+          0.3590833332987417,
+          0.07789042489254655,
+          0.22642464090139638,
+          0.21742169645211526,
+          0.13158729357534696,
+          0.2800882769576642,
+          0.1548868920068437,
+          0.11536369742362283,
+          0.13219031849332186,
+          0.2472283995028174,
+          0.052614632039419,
+          0.36609635823800113,
+          0.1702542753596936,
+          0.1086732530572511
+        ],
+        "successes": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "video_paths": [
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_0.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_1.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_2.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_3.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_4.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_5.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_6.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_7.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_8.mp4",
+          "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_9.mp4"
+        ]
+      }
+    }
+  ],
+  "per_group": {
+    "push-v3": {
+      "avg_sum_reward": 34.57413750829865,
+      "avg_max_reward": 0.1875419748259106,
+      "pc_success": 0.0,
+      "n_episodes": 15,
+      "video_paths": [
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_0.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_1.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_2.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_3.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_4.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_5.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_6.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_7.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_8.mp4",
+        "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_9.mp4"
+      ]
+    }
+  },
+  "overall": {
+    "avg_sum_reward": 34.57413750829865,
+    "avg_max_reward": 0.1875419748259106,
+    "pc_success": 0.0,
+    "n_episodes": 15,
+    "eval_s": 2717.3840692043304,
+    "eval_ep_s": 181.15893799463907,
+    "video_paths": [
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_0.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_1.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_2.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_3.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_4.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_5.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_6.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_7.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_8.mp4",
+      "/vol/bitbucket/aa6622/pi05-cube-FT/artifacts/run_20260408_025416/phase13_posttrain_eval/run_20260409T133002Z_ep15_vtrue/videos/push-v3_0/eval_episode_9.mp4"
+    ]
+  }
+}

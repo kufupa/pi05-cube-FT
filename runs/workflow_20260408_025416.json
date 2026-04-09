@@ -1,0 +1,62 @@
+{
+  "stages": [
+    {
+      "stage": "stage00_preflight.slurm",
+      "job_id": "229789",
+      "requires_gpu": true
+    },
+    {
+      "stage": "stage01_install_lerobot_mw.slurm",
+      "job_id": "229790",
+      "requires_gpu": true
+    },
+    {
+      "stage": "stage01b_install_metaworld.slurm",
+      "job_id": "229791",
+      "requires_gpu": false
+    },
+    {
+      "stage": "stage02_baseline_pushv3_eval.slurm",
+      "job_id": "229792",
+      "requires_gpu": true
+    },
+    {
+      "stage": "stage03_install_jepa_wms.slurm",
+      "job_id": "229793",
+      "requires_gpu": true
+    },
+    {
+      "stage": "stage04_bridge_dataset_build.slurm",
+      "job_id": "229847",
+      "requires_gpu": true
+    },
+    {
+      "stage": "stage06_train_stageB_jepa_mix.slurm",
+      "job_id": "229849",
+      "requires_gpu": true
+    },
+    {
+      "stage": "stage07_vgg_gatecheck.slurm",
+      "job_id": "229848",
+      "requires_gpu": true
+    },
+    {
+      "stage": "stage08_train_stageC_vgg_aux.slurm",
+      "job_id": "229850",
+      "requires_gpu": true
+    },
+    {
+      "stage": "stage05_train_stageA_real_only.slurm",
+      "job_id": "229851",
+      "requires_gpu": true
+    },
+    {
+      "stage": "stage09_final_eval_and_bundle.slurm",
+      "job_id": "229852",
+      "requires_gpu": true
+    }
+  ],
+  "schema_version": "workflow_outline_v1",
+  "generated_at_utc": "2026-04-08T02:57:00.129484+00:00",
+  "run_id": "20260408_025416"
+}
